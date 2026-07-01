@@ -85,6 +85,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     weak var model: TranscriberModel?
     var pendingURL: URL?
 
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        // The standard About panel reads applicationIconImage; the asset-catalog
+        // app icon isn't loadable as a file, so set it explicitly here.
+        if let icon = NSImage(named: "AppIconImage") {
+            NSApplication.shared.applicationIconImage = icon
+        }
+    }
+
     func application(_ application: NSApplication, open urls: [URL]) {
         guard let url = urls.first else { return }
         if let model {
