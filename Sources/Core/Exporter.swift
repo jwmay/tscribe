@@ -94,13 +94,21 @@ enum Exporter {
                 .joined()
             return "<w:r>\(rPr)\(content)</w:r>"
         }
-        func para(_ runs: String) -> String { "<w:p>\(runs)</w:p>" }
+        func para(_ runs: String, pPr: String = "") -> String { "<w:p>\(pPr)\(runs)</w:p>" }
+
+        // Hanging indent (1") + matching tab stop so wrapped lines align under the
+        // text, not back under the timestamp.
+        let segPr = "<w:pPr>"
+            + "<w:tabs><w:tab w:val=\"left\" w:pos=\"1440\"/></w:tabs>"
+            + "<w:ind w:left=\"1440\" w:hanging=\"1440\"/>"
+            + "<w:spacing w:after=\"120\"/>"
+            + "</w:pPr>"
 
         var body = para(run("Transcript", bold: true, sizeHalfPt: 32))
         for seg in t.segments {
             body += para(run(Timecode.hms(seg.start), bold: true)
                          + "<w:r><w:tab/></w:r>"
-                         + run(seg.text))
+                         + run(seg.text), pPr: segPr)
         }
         body += para("")
         body += para(run(Disclaimer.long, italic: true))
