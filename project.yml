@@ -1,0 +1,29 @@
+name: tscribe
+options:
+  bundleIdPrefix: com.jwmay
+  deploymentTarget:
+    macOS: "14.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    SWIFT_VERSION: "5.0"
+    DEVELOPMENT_TEAM: ""
+targets:
+  tscribe:
+    type: application
+    platform: macOS
+    sources:
+      - Sources/App
+      - Sources/Core
+    settings:
+      base:
+        PRODUCT_NAME: Tscribe
+        PRODUCT_BUNDLE_IDENTIFIER: com.jwmay.tscribe
+        GENERATE_INFOPLIST_FILE: YES
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        INFOPLIST_KEY_LSApplicationCategoryType: "public.app-category.productivity"
+        INFOPLIST_KEY_NSHumanReadableCopyright: "Copyright © 2026"
+        COMBINE_HIDPI_IMAGES: YES
+        ENABLE_USER_SCRIPT_SANDBOXING: NO

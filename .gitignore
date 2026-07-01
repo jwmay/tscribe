@@ -1,0 +1,17 @@
+# Generated Xcode project (regenerated from project.yml by XcodeGen)
+*.xcodeproj/
+
+# Build output
+build/
+DerivedData/
+.swiftpm/
+dist/
+
+# Bundled engine artifacts (large — copied in at build time, not committed)
+Vendor/
+*.bin
+
+# macOS / Xcode cruft
+.DS_Store
+*.xcuserstate
+xcuserdata/
