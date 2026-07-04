@@ -12,6 +12,7 @@ enum ExportFormat { case docx, pdf, txt, txtTimestamped, srt, vtt, rtf }
 final class TranscriberModel: ObservableObject {
     enum Stage: Equatable {
         case idle
+        case onboarding             // Lite edition only: one-time model download (never set in Full)
         case extracting
         case transcribing(Double)   // 0...1
         case ready
@@ -40,7 +41,30 @@ final class TranscriberModel: ObservableObject {
     private var currentDocURL: URL?
     private var saveWork: DispatchWorkItem?
 
-    init() { refreshRecents() }
+    #if LITE
+    /// Lite edition: downloads the large-v3 model on first launch.
+    let installer = ModelInstaller()
+    /// A file opened before the model is installed — transcribed once setup finishes.
+    private var pendingMediaURL: URL?
+    #endif
+
+    init() {
+        refreshRecents()
+        #if LITE
+        installer.onInstalled = { [weak self] in self?.finishOnboarding() }
+        #endif
+        stage = defaultStage
+    }
+
+    /// The screen shown at launch and after `reset()`. In the Lite edition this is
+    /// the onboarding screen until the model is installed; otherwise the drop screen.
+    private var defaultStage: Stage {
+        #if LITE
+        return EngineLocator.model == nil ? .onboarding : .idle
+        #else
+        return .idle
+        #endif
+    }
 
     private func makeOptions() -> TranscriptionOptions {
         var o = TranscriptionOptions()
@@ -68,6 +92,15 @@ final class TranscriberModel: ObservableObject {
     // MARK: Transcribe pipeline
 
     func load(url: URL) {
+        #if LITE
+        // In the Lite edition, hold the file and run onboarding if the model
+        // isn't installed yet, rather than failing with `engineMissing`.
+        if EngineLocator.model == nil {
+            pendingMediaURL = url
+            stage = .onboarding
+            return
+        }
+        #endif
         reset(keepIdle: false)
         mediaURL = url
         setupPlayer(url: url)
@@ -114,10 +147,23 @@ final class TranscriberModel: ObservableObject {
         lastSaved = nil
         isSaving = false
         if keepIdle {
-            stage = .idle
+            stage = defaultStage
             refreshRecents()
         }
     }
+
+    #if LITE
+    /// Called by `ModelInstaller` once the model is verified and installed.
+    /// Transcribes a file the user dropped during setup, or returns to the drop screen.
+    private func finishOnboarding() {
+        if let url = pendingMediaURL {
+            pendingMediaURL = nil
+            load(url: url)
+        } else {
+            stage = .idle
+        }
+    }
+    #endif
 
     // MARK: Reopen a saved document
 

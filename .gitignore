@@ -11,6 +11,17 @@ dist/
 Vendor/
 *.bin
 
+# ...but DO commit the small engine artifacts used for hermetic + CI builds:
+# the whisper-cli binary (~3 MB) and the Silero VAD model (~0.9 MB). The big
+# 2.9 GB ggml-large-v3.bin model is still never committed (Full bundles it from
+# ~/Developer/whisper.cpp; Lite downloads it at first launch).
+!engine/
+!engine/whisper-cli
+!engine/ggml-silero-v5.1.2.bin
+
+# Machine-local Claude Code permissions (the shared commands/ + CLAUDE.md are committed)
+.claude/settings.local.json
+
 # macOS / Xcode cruft
 .DS_Store
 *.xcuserstate

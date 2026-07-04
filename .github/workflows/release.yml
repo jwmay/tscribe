@@ -1,0 +1,64 @@
+name: Release (Lite)
+
+# Builds the Lite edition DMG (a few MB — fits GitHub's 2 GiB asset limit) and,
+# on a version tag, attaches it to the GitHub Release. The Full edition DMG
+# (~2.7 GB) exceeds GitHub's limit and is still released manually from a dev Mac
+# via scripts/package-full.sh.
+#
+# No Apple Developer account / signing secrets are needed: the app is ad-hoc
+# signed (codesign --sign -), exactly as local packaging does. The small engine
+# artifacts (whisper-cli + Silero VAD) are committed under engine/, so the runner
+# needs no whisper.cpp checkout; the large-v3 model is downloaded at first launch.
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-lite-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-lite:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Show toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+
+      - name: Package Lite DMG
+        run: scripts/package-lite.sh
+
+      - name: Upload DMG artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Tscribe-Lite-dmg
+          path: dist/Tscribe-Lite.dmg
+          if-no-files-found: error
+
+      - name: Attach to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/Tscribe-Lite.dmg --clobber
+          else
+            gh release create "$TAG" dist/Tscribe-Lite.dmg \
+              --title "Tscribe $TAG" \
+              --notes "**Lite edition** — small download; Tscribe fetches its speech model (~2.9 GB) once on first launch, then runs fully offline. Your recordings and transcripts never leave your Mac.
+
+The full offline edition (model bundled, ~2.7 GB) is distributed separately."
+          fi

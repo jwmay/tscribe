@@ -4,10 +4,18 @@ options:
   deploymentTarget:
     macOS: "14.0"
   createIntermediateGroups: true
+# Build configurations. `ReleaseLite` is the download-on-first-launch edition:
+# it inherits Release but defines the `LITE` compilation condition, which turns
+# on the model downloader + onboarding flow. `Release` is the full, offline
+# edition (model bundled) and stays byte-identical to the 1.0 build.
+configs:
+  Debug: debug
+  Release: release
+  ReleaseLite: release
 settings:
   base:
-    MARKETING_VERSION: "1.0.0"
-    CURRENT_PROJECT_VERSION: "1"
+    MARKETING_VERSION: "1.1.0"
+    CURRENT_PROJECT_VERSION: "2"
     SWIFT_VERSION: "5.0"
     DEVELOPMENT_TEAM: ""
 targets:
@@ -27,3 +35,18 @@ targets:
         INFOPLIST_KEY_NSHumanReadableCopyright: "Copyright © 2026"
         COMBINE_HIDPI_IMAGES: YES
         ENABLE_USER_SCRIPT_SANDBOXING: NO
+      configs:
+        # Lite edition: compile in the downloader + onboarding (guarded by #if LITE).
+        ReleaseLite:
+          SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) LITE"
+# Shared scheme so `xcodebuild -scheme tscribe -configuration <Debug|Release|ReleaseLite>`
+# works deterministically on a fresh checkout (e.g. CI), not just after opening in Xcode.
+schemes:
+  tscribe:
+    build:
+      targets:
+        tscribe: all
+    run:
+      config: Debug
+    archive:
+      config: Release
