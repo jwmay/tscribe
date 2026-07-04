@@ -45,9 +45,17 @@ onboarding code doesn't exist and the `.onboarding` stage is never reached.
 - `Sources/App/OnboardingView.swift` — **`#if LITE`**. Full-window onboarding (intro → downloading →
   verifying → installing → failed), mirroring `MissingMediaView` + `WorkingView` patterns.
 - `Sources/App/ContentView.swift` — the `switch model.stage` window router (has the `.onboarding` case).
-- `scripts/package.sh` — `--edition full|lite`; bundles engine, ad-hoc signs, builds the DMG. Lite
-  runs a **drift-guard** (local model SHA must match `ModelSpec.sha256`); Full runs an
-  **offline-audit** (fails if the Hugging Face URL leaked into the binary).
+- `scripts/package.sh` — `--edition full|lite`; bundles engine, ad-hoc signs, builds a **styled DMG**
+  (custom background, positioned app icon + Applications drop target, 128px icons, volume icon). Lite
+  runs a **drift-guard** (local model SHA must match `ModelSpec.sha256`); Full runs an **offline-audit**
+  (fails if the Hugging Face URL leaked into the binary).
+- `scripts/dmg_settings.py` — `dmgbuild` config that writes the installer window layout **directly**
+  (no Finder/AppleScript), so it works headless (background shells, CI). **Build dependency:**
+  `python3 -m pip install --user dmgbuild` (package.sh best-effort installs it; CI installs it
+  explicitly). Without it, package.sh falls back to a plain DMG.
+- `scripts/DMGBackgroundGen.swift` + `assets/dmg/background.tiff` — the installer window background
+  (charcoal + teal glow, wordmark, tagline, drag arrow), rendered dependency-free via AppKit like
+  `IconGen.swift`. Regenerate after design changes: `swiftc -O scripts/DMGBackgroundGen.swift -o /tmp/dmgbg && /tmp/dmgbg /tmp && tiffutil -cathidpicheck /tmp/background.png /tmp/background@2x.png -out assets/dmg/background.tiff`. Icon coordinates in the generator must match `icon_locations` in `scripts/dmg_settings.py`.
 - `.github/workflows/release.yml` — builds + attaches the **Lite** DMG to a GitHub Release on `v*` tags.
 - `engine/` — vendored small artifacts (`whisper-cli` ~3 MB, `ggml-silero-v5.1.2.bin` ~0.9 MB) so
   local + CI builds are hermetic. The 2.9 GB model is **never** committed.

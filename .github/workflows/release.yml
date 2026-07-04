@@ -32,6 +32,9 @@ jobs:
       - name: Install XcodeGen
         run: brew install xcodegen
 
+      - name: Install dmgbuild (styled installer window, headless)
+        run: python3 -m pip install --break-system-packages dmgbuild || python3 -m pip install dmgbuild
+
       - name: Show toolchain
         run: |
           xcodebuild -version

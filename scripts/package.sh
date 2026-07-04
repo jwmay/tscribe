@@ -119,14 +119,41 @@ codesign --verify --verbose=2 "$APP" || echo "   (verify note above is expected 
 echo "==> Sanity: bundled whisper-cli runs from its bundled location"
 "$RES/whisper-cli" --help >/dev/null 2>&1 && echo "   OK: bundled whisper-cli executes"
 
-echo "==> Creating .dmg"
+echo "==> Creating styled .dmg"
 mkdir -p "$DIST_DIR"
-STAGE="$(mktemp -d)"
-cp -R "$APP" "$STAGE/"
-ln -s /Applications "$STAGE/Applications"
 rm -f "$DIST_DIR/$DMG_NAME"
-hdiutil create -volname "$APP_NAME" -srcfolder "$STAGE" -ov -format UDZO "$DIST_DIR/$DMG_NAME" >/dev/null
-rm -rf "$STAGE"
+BG_SRC="$PROJECT_DIR/assets/dmg/background.tiff"
+ICON_SRC="$APP/Contents/Resources/AppIcon.icns"
+SETTINGS="$PROJECT_DIR/scripts/dmg_settings.py"
+
+# Prefer dmgbuild: it writes the Finder layout (background, icon positions, window,
+# volume icon) directly into the DMG — no Finder/AppleScript, so it works headless
+# (background shells, CI) and deterministically. Best-effort install if missing.
+if ! python3 -c 'import dmgbuild' >/dev/null 2>&1; then
+  python3 -m pip install --user --quiet dmgbuild >/dev/null 2>&1 || true
+fi
+
+if python3 -c 'import dmgbuild' >/dev/null 2>&1 && [ -f "$BG_SRC" ]; then
+  # Explicit image size with headroom — dmgbuild's auto-sizing under-counts the
+  # 2.9 GB bundled model (Full) and silently drops it.
+  APP_MB=$(du -sm "$APP" | cut -f1)
+  DMG_SIZE_MB=$(( APP_MB + APP_MB / 5 + 100 ))
+  python3 -m dmgbuild \
+    -s "$SETTINGS" \
+    -D app="$APP" \
+    -D background="$BG_SRC" \
+    -D icon="$ICON_SRC" \
+    -D size="${DMG_SIZE_MB}M" \
+    "$APP_NAME" "$DIST_DIR/$DMG_NAME" >/dev/null
+  echo "   OK: styled installer window (dmgbuild)"
+else
+  echo "   note: dmgbuild/background unavailable — building a plain DMG"
+  STAGE="$(mktemp -d)"
+  cp -R "$APP" "$STAGE/"
+  ln -s /Applications "$STAGE/Applications"
+  hdiutil create -volname "$APP_NAME" -srcfolder "$STAGE" -ov -format UDZO "$DIST_DIR/$DMG_NAME" >/dev/null
+  rm -rf "$STAGE"
+fi
 
 echo "==> Done"
 echo "    Edition:   $EDITION"
