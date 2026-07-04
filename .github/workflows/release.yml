@@ -32,9 +32,6 @@ jobs:
       - name: Install XcodeGen
         run: brew install xcodegen
 
-      - name: Install dmgbuild (styled installer window, headless)
-        run: python3 -m pip install --break-system-packages dmgbuild || python3 -m pip install dmgbuild
-
       - name: Show toolchain
         run: |
           xcodebuild -version
@@ -61,7 +58,5 @@ jobs:
           else
             gh release create "$TAG" dist/Tscribe-Lite.dmg \
               --title "Tscribe $TAG" \
-              --notes "**Lite edition** — small download; Tscribe fetches its speech model (~2.9 GB) once on first launch, then runs fully offline. Your recordings and transcripts never leave your Mac.
-
-The full offline edition (model bundled, ~2.7 GB) is distributed separately."
+              --notes "**Lite edition** — small download; Tscribe fetches its speech model (~2.9 GB) once on first launch, then runs fully offline. Your recordings and transcripts never leave your Mac. The full offline edition (model bundled, ~2.7 GB) is distributed separately."
           fi

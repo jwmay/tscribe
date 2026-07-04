@@ -46,16 +46,27 @@ onboarding code doesn't exist and the `.onboarding` stage is never reached.
   verifying → installing → failed), mirroring `MissingMediaView` + `WorkingView` patterns.
 - `Sources/App/ContentView.swift` — the `switch model.stage` window router (has the `.onboarding` case).
 - `scripts/package.sh` — `--edition full|lite`; bundles engine, ad-hoc signs, builds a **styled DMG**
-  (custom background, positioned app icon + Applications drop target, 128px icons, volume icon). Lite
-  runs a **drift-guard** (local model SHA must match `ModelSpec.sha256`); Full runs an **offline-audit**
-  (fails if the Hugging Face URL leaked into the binary).
-- `scripts/dmg_settings.py` — `dmgbuild` config that writes the installer window layout **directly**
-  (no Finder/AppleScript), so it works headless (background shells, CI). **Build dependency:**
-  `python3 -m pip install --user dmgbuild` (package.sh best-effort installs it; CI installs it
-  explicitly). Without it, package.sh falls back to a plain DMG.
-- `scripts/DMGBackgroundGen.swift` + `assets/dmg/background.tiff` — the installer window background
-  (charcoal + teal glow, wordmark, tagline, drag arrow), rendered dependency-free via AppKit like
-  `IconGen.swift`. Regenerate after design changes: `swiftc -O scripts/DMGBackgroundGen.swift -o /tmp/dmgbg && /tmp/dmgbg /tmp && tiffutil -cathidpicheck /tmp/background.png /tmp/background@2x.png -out assets/dmg/background.tiff`. Icon coordinates in the generator must match `icon_locations` in `scripts/dmg_settings.py`.
+  (custom background, positioned app icon + Applications drop target, 128px icons, volume icon; volume
+  name "Tscribe Installer"). Lite runs a **drift-guard** (local model SHA must match `ModelSpec.sha256`);
+  Full runs an **offline-audit** (fails if the Hugging Face URL leaked into the binary).
+- **DMG styling — how it works (macOS 26 gotcha).** The installer window layout lives in a committed
+  `.DS_Store` template (`assets/dmg/DS_Store`). package.sh injects it into the mounted DMG headlessly
+  (no Finder, no dmgbuild) — so it works in background shells and CI. This is required because on
+  **macOS 26, Finder only resolves a background reference that Finder itself authored** — dmgbuild's
+  `mac_alias`-synthesized alias renders blank. So:
+  - `assets/dmg/DS_Store` — the Finder-authored template (icon positions, window, background ref).
+    **Regenerate it** whenever the app name, window layout, or background path changes:
+    `DS_STORE_OUT=$PWD/assets/dmg/DS_Store scripts/style-dmg.sh <ReleaseLite app> "Tscribe Installer" assets/dmg/background.png /tmp/throwaway.dmg <AppIcon.icns>`,
+    then (if the capture races) grab `.DS_Store` from the built DMG. **Must be regenerated on a Mac
+    whose Finder version ≥ the oldest target OS.**
+  - `scripts/style-dmg.sh` — builds a styled DMG *via Finder/AppleScript* (needs a GUI session). Used
+    only to author/regenerate the template, not in the normal build path.
+  - `scripts/DMGBackgroundGen.swift` + `assets/dmg/background.png` — the background image (charcoal +
+    teal spotlights under each icon for label legibility, wordmark, tagline, drag arrow), rendered
+    dependency-free via AppKit like `IconGen.swift`. It's the **2× (1280×800) PNG** (a plain PNG, not a
+    `tiffutil` HiDPI TIFF — Finder won't render those). Regenerate:
+    `swiftc -O scripts/DMGBackgroundGen.swift -o /tmp/dmgbg && /tmp/dmgbg /tmp && cp /tmp/background@2x.png assets/dmg/background.png`.
+    Icon coordinates in the generator must match the positions baked into the DS_Store template.
 - `.github/workflows/release.yml` — builds + attaches the **Lite** DMG to a GitHub Release on `v*` tags.
 - `engine/` — vendored small artifacts (`whisper-cli` ~3 MB, `ggml-silero-v5.1.2.bin` ~0.9 MB) so
   local + CI builds are hermetic. The 2.9 GB model is **never** committed.

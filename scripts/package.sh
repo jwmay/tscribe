@@ -122,38 +122,56 @@ echo "==> Sanity: bundled whisper-cli runs from its bundled location"
 echo "==> Creating styled .dmg"
 mkdir -p "$DIST_DIR"
 rm -f "$DIST_DIR/$DMG_NAME"
-BG_SRC="$PROJECT_DIR/assets/dmg/background.tiff"
+VOL="Tscribe Installer"
+BG_SRC="$PROJECT_DIR/assets/dmg/background.png"
+DS_TMPL="$PROJECT_DIR/assets/dmg/DS_Store"
 ICON_SRC="$APP/Contents/Resources/AppIcon.icns"
-SETTINGS="$PROJECT_DIR/scripts/dmg_settings.py"
 
-# Prefer dmgbuild: it writes the Finder layout (background, icon positions, window,
-# volume icon) directly into the DMG — no Finder/AppleScript, so it works headless
-# (background shells, CI) and deterministically. Best-effort install if missing.
-if ! python3 -c 'import dmgbuild' >/dev/null 2>&1; then
-  python3 -m pip install --user --quiet dmgbuild >/dev/null 2>&1 || true
-fi
+# Detach any stale volume of this name so the mount below is unambiguous.
+for stale in "/Volumes/$VOL" "/Volumes/$VOL "*; do
+  [ -d "$stale" ] && hdiutil detach "$stale" -force >/dev/null 2>&1 || true
+done
 
-if python3 -c 'import dmgbuild' >/dev/null 2>&1 && [ -f "$BG_SRC" ]; then
-  # Explicit image size with headroom — dmgbuild's auto-sizing under-counts the
-  # 2.9 GB bundled model (Full) and silently drops it.
-  APP_MB=$(du -sm "$APP" | cut -f1)
-  DMG_SIZE_MB=$(( APP_MB + APP_MB / 5 + 100 ))
-  python3 -m dmgbuild \
-    -s "$SETTINGS" \
-    -D app="$APP" \
-    -D background="$BG_SRC" \
-    -D icon="$ICON_SRC" \
-    -D size="${DMG_SIZE_MB}M" \
-    "$APP_NAME" "$DIST_DIR/$DMG_NAME" >/dev/null
-  echo "   OK: styled installer window (dmgbuild)"
+# Stage the app + Applications drop target (+ background if we have a template).
+STAGE="$(mktemp -d)"
+cp -R "$APP" "$STAGE/"
+ln -s /Applications "$STAGE/Applications"
+STYLED=0
+if [ -f "$BG_SRC" ] && [ -f "$DS_TMPL" ]; then
+  mkdir "$STAGE/.background"
+  cp "$BG_SRC" "$STAGE/.background/background.png"
+  STYLED=1
 else
-  echo "   note: dmgbuild/background unavailable — building a plain DMG"
-  STAGE="$(mktemp -d)"
-  cp -R "$APP" "$STAGE/"
-  ln -s /Applications "$STAGE/Applications"
-  hdiutil create -volname "$APP_NAME" -srcfolder "$STAGE" -ov -format UDZO "$DIST_DIR/$DMG_NAME" >/dev/null
-  rm -rf "$STAGE"
+  echo "   note: missing background/DS_Store template — building a plain DMG"
 fi
+
+# Read-write DMG sized to contents + proportional headroom (the 2.9 GB Full app
+# needs real slack, not a flat pad).
+STAGE_MB=$(du -sm "$STAGE" | cut -f1)
+SIZE_MB=$(( STAGE_MB + STAGE_MB / 5 + 100 ))
+RW="$(mktemp -u).dmg"
+hdiutil create -volname "$VOL" -srcfolder "$STAGE" -fs HFS+ -format UDRW -size "${SIZE_MB}m" "$RW" >/dev/null
+
+if [ "$STYLED" = 1 ]; then
+  # Inject the macOS-26 Finder-authored layout (icon positions, window, and the
+  # background reference) + volume icon. dmgbuild/mac_alias-synthesized background
+  # aliases do NOT render on macOS 26 — only a Finder-authored DS_Store does — but
+  # injecting that captured template needs no Finder, so it works headless (CI).
+  # Regenerate the template with scripts/style-dmg.sh if the layout/app name changes.
+  ATTACH="$(hdiutil attach -readwrite -noverify -noautoopen "$RW")"
+  DEV="$(printf '%s\n' "$ATTACH" | awk '/^\/dev\//{d=$1} END{print d}')"
+  MNT="/Volumes/$VOL"   # deterministic: we set -volname and detached stale mounts above
+  cp "$DS_TMPL" "$MNT/.DS_Store"
+  if cp "$ICON_SRC" "$MNT/.VolumeIcon.icns" 2>/dev/null; then
+    SetFile -a C "$MNT" 2>/dev/null || true
+  fi
+  sync; sync
+  hdiutil detach "$DEV" >/dev/null 2>&1 || hdiutil detach "$MNT" -force >/dev/null 2>&1 || true
+  echo "   OK: styled installer window (DS_Store template, volume '$VOL')"
+fi
+
+hdiutil convert "$RW" -format UDZO -imagekey zlib-level=9 -o "$DIST_DIR/$DMG_NAME" >/dev/null
+rm -f "$RW"; rm -rf "$STAGE"
 
 echo "==> Done"
 echo "    Edition:   $EDITION"

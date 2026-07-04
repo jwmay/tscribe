@@ -44,10 +44,17 @@ func drawBackground() {
     NSGradient(colors: [rgb(0.13, 0.15, 0.18), rgb(0.07, 0.08, 0.10)])!
         .draw(in: NSRect(x: 0, y: 0, width: W, height: H), angle: -90)
 
-    // Teal glow behind the app icon.
-    let center = NSPoint(x: appIconCenter.x, y: flipY(appIconCenter.y))
-    NSGradient(colors: [rgb(0.16, 0.73, 0.76, 0.42), rgb(0.16, 0.73, 0.76, 0.0)])!
-        .draw(fromCenter: center, radius: 0, toCenter: center, radius: 205, options: [])
+    // Soft spotlights under each icon. They double as (a) a teal brand glow and
+    // (b) a lighter pool so Finder's dark icon-label text ("Tscribe.app" /
+    // "Applications") stays legible on the charcoal background. Centered a little
+    // below the icon so the pool reaches the label row beneath it.
+    func spot(x: CGFloat, _ color: NSColor, _ maxAlpha: CGFloat) {
+        let ctr = NSPoint(x: x, y: flipY(244))
+        NSGradient(colors: [color.withAlphaComponent(maxAlpha), color.withAlphaComponent(0)])!
+            .draw(fromCenter: ctr, radius: 0, toCenter: ctr, radius: 168, options: [])
+    }
+    spot(x: appIconCenter.x, rgb(0.20, 0.68, 0.74), 0.42)   // teal, brand + legibility
+    spot(x: appsIconCenter.x, rgb(0.62, 0.68, 0.76), 0.32)  // neutral, legibility
 
     // Wordmark + tagline (top-left, like the Firefox installer).
     drawText("Tscribe", size: 46, weight: .semibold, color: rgb(0.95, 0.97, 0.98),
