@@ -2,6 +2,14 @@
 
 A native macOS app that transcribes video and audio **entirely on-device** — nothing is ever uploaded — with accurate word-level timestamps. Built for private, evidentiary-sensitive work (e.g. legal recordings).
 
+## Requirements
+
+- **Apple Silicon Mac (M1 or later)** — required. The transcription engine is Apple-Silicon-native and Metal-accelerated; **Intel Macs are not supported** (the app launches but can't transcribe).
+- **macOS 14 (Sonoma) or later**
+- **8 GB RAM** (16 GB recommended for long recordings)
+- **~6 GB free disk** for the Standard first-launch model download (settles to ~3 GB); ~3 GB for the Complete edition
+- **Internet** once, at first launch (Standard edition only) — never for transcription
+
 ## Editions
 
 Both editions are the **complete app** — they differ only in whether the speech model ships

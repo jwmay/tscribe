@@ -5,6 +5,16 @@ Tscribe turns a video or audio recording into a text transcript with timestamps.
 
 ---
 
+## Before you start
+
+Tscribe needs a Mac with **Apple Silicon** (M1, M2, M3, or M4 — any Mac from late 2020 onward) and
+**macOS 14 (Sonoma) or newer**. It won't run on older Intel Macs.
+
+For setup you'll want **an internet connection the first time** you open it (for a one-time ~2.9 GB
+download) and about **6 GB of free space**. After that, everything works offline.
+
+---
+
 ## Installing (one time)
 
 1. Double-click the **Tscribe** installer you downloaded.
