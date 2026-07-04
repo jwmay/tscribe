@@ -15,8 +15,8 @@ when the model is **intentionally** changing (e.g. a new large-v3 revision or a 
    - `sha256` → the new digest
    - If the download URL is also changing, update `url` too (ask the user for the new URL).
 4. Show a diff of the old → new `ModelSpec` values and remind the user to:
-   - re-build/re-bundle the **Full** edition so its bundled model matches the new spec, and
-   - run `/release-lite` (the drift-guard will confirm the pin matches the local model).
+   - re-build/re-bundle the **Complete** edition so its bundled model matches the new spec, and
+   - run `/release-standard` (the drift-guard will confirm the pin matches the local model).
 
-Do not change the model identity without the user's explicit intent — this is what the Lite app
+Do not change the model identity without the user's explicit intent — this is what the Standard app
 downloads on every fresh install.

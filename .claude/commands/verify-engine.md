@@ -10,7 +10,7 @@ Verify the engine artifacts are in place and consistent:
    - `engine/ggml-silero-v5.1.2.bin` (~0.9 MB)
 2. Read the pinned SHA-256 from `Sources/Core/ModelInstaller.swift` (`ModelSpec.sha256`).
 3. If `~/Developer/whisper.cpp/models/ggml-large-v3.bin` exists, `shasum -a 256` it and compare to the
-   pinned SHA. Report MATCH / MISMATCH. If it's missing, note that the Full edition and the Lite
+   pinned SHA. Report MATCH / MISMATCH. If it's missing, note that the Complete edition and the Standard
    drift-guard both need it locally.
 4. Confirm `engine/whisper-cli --help` runs (the bundled binary executes).
 

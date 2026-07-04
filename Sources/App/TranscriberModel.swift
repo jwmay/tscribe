@@ -12,7 +12,7 @@ enum ExportFormat { case docx, pdf, txt, txtTimestamped, srt, vtt, rtf }
 final class TranscriberModel: ObservableObject {
     enum Stage: Equatable {
         case idle
-        case onboarding             // Lite edition only: one-time model download (never set in Full)
+        case onboarding             // Standard edition only: one-time model download (never set in Complete builds)
         case extracting
         case transcribing(Double)   // 0...1
         case ready
@@ -41,8 +41,8 @@ final class TranscriberModel: ObservableObject {
     private var currentDocURL: URL?
     private var saveWork: DispatchWorkItem?
 
-    #if LITE
-    /// Lite edition: downloads the large-v3 model on first launch.
+    #if DOWNLOAD_MODEL
+    /// Standard edition: downloads the large-v3 model on first launch.
     let installer = ModelInstaller()
     /// A file opened before the model is installed — transcribed once setup finishes.
     private var pendingMediaURL: URL?
@@ -50,16 +50,16 @@ final class TranscriberModel: ObservableObject {
 
     init() {
         refreshRecents()
-        #if LITE
+        #if DOWNLOAD_MODEL
         installer.onInstalled = { [weak self] in self?.finishOnboarding() }
         #endif
         stage = defaultStage
     }
 
-    /// The screen shown at launch and after `reset()`. In the Lite edition this is
+    /// The screen shown at launch and after `reset()`. In the Standard edition this is
     /// the onboarding screen until the model is installed; otherwise the drop screen.
     private var defaultStage: Stage {
-        #if LITE
+        #if DOWNLOAD_MODEL
         return EngineLocator.model == nil ? .onboarding : .idle
         #else
         return .idle
@@ -92,8 +92,8 @@ final class TranscriberModel: ObservableObject {
     // MARK: Transcribe pipeline
 
     func load(url: URL) {
-        #if LITE
-        // In the Lite edition, hold the file and run onboarding if the model
+        #if DOWNLOAD_MODEL
+        // In the Standard edition, hold the file and run onboarding if the model
         // isn't installed yet, rather than failing with `engineMissing`.
         if EngineLocator.model == nil {
             pendingMediaURL = url
@@ -152,7 +152,7 @@ final class TranscriberModel: ObservableObject {
         }
     }
 
-    #if LITE
+    #if DOWNLOAD_MODEL
     /// Called by `ModelInstaller` once the model is verified and installed.
     /// Transcribes a file the user dropped during setup, or returns to the drop screen.
     private func finishOnboarding() {

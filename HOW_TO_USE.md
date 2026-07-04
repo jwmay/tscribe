@@ -7,24 +7,24 @@ Tscribe turns a video or audio recording into a text transcript with timestamps.
 
 ## Installing (one time)
 
-1. Double-click **Tscribe.dmg**.
+1. Double-click the **Tscribe** installer you downloaded.
 2. In the window that opens, **drag the Tscribe icon onto the Applications folder**.
 3. Open your **Applications** folder and find **Tscribe**.
 4. The first time only: **right-click** (or Control-click) Tscribe → choose **Open** → click **Open** again in the box that appears.
    - You only have to do this once. After that, open it normally.
    - This step exists because the app isn't sold through Apple's store — it's yours, made just for you.
 
-### First launch: one-time setup download (Lite version only)
+### First launch: one-time setup download
 
-If you installed the small **Lite** download, the very first time you open Tscribe it will
-ask to **download its speech model** (about 2.9 GB). This happens once:
+The first time you open Tscribe, it may ask to **download its speech model** (about 2.9 GB).
+This happens once:
 
 - Click **Download Speech Model** and leave the window open while it downloads.
 - You can quit and reopen — it picks up where it left off.
 - After it finishes, Tscribe works the same as always, and **fully offline** from then on.
 - Only the speech model is downloaded. Your recordings and transcripts are never uploaded.
 
-(The full-size download already includes the speech model, so it skips this step.)
+(If the version you installed already includes the speech model, it skips this step.)
 
 ---
 

@@ -11,7 +11,7 @@ Bump Tscribe's version to **$1** (both editions share one version line).
 2. Run `xcodegen generate` so the generated project picks up the change.
 3. Report the old → new values.
 4. Do **not** commit or tag unless the user asks. If they want to release, remind them that pushing
-   a `vX.Y.Z` tag triggers the Lite CI release (`.github/workflows/release.yml`), and the tag should
+   a `vX.Y.Z` tag triggers the Standard CI release (`.github/workflows/release.yml`), and the tag should
    match `$1`.
 
 If `$1` is empty, ask for the target version instead of guessing.

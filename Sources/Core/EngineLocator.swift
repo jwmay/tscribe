@@ -3,13 +3,13 @@ import Foundation
 /// Finds the whisper-cli binary and the large-v3 model.
 ///
 /// Resolution order for the model is **downloaded → bundled → dev-fallback**:
-/// - Downloaded: the Lite edition writes the model to Application Support at first
+/// - Downloaded: the Standard edition writes the model to Application Support at first
 ///   launch (see `ModelInstaller`), outside the signed app bundle.
-/// - Bundled: the Full edition ships the 2.9 GB model inside `Contents/Resources`.
+/// - Bundled: the Complete edition ships the 2.9 GB model inside `Contents/Resources`.
 /// - Dev-fallback (**`#if DEBUG` only**): during development we use the local
 ///   whisper.cpp checkout so we can iterate without bundling or downloading a 3 GB
-///   model. Shipped Release/ReleaseLite builds never look at `~/Developer/whisper.cpp`
-///   — so a packaged Lite build reliably triggers first-launch onboarding on any Mac.
+///   model. Shipped Release/ReleaseStandard builds never look at `~/Developer/whisper.cpp`
+///   — so a packaged Standard build reliably triggers first-launch onboarding on any Mac.
 ///
 /// `whisperCLI` and `vadModel` are bundled in **both** editions (they are small),
 /// so only the big model is ever downloaded.
@@ -20,7 +20,7 @@ enum EngineLocator {
     }
     #endif
 
-    // MARK: Writable install location (Lite edition)
+    // MARK: Writable install location (Standard edition)
 
     /// `~/Library/Application Support/Tscribe/models` — a writable location outside
     /// the signed `.app`. Installing here (rather than into `Contents/Resources`)
@@ -31,7 +31,7 @@ enum EngineLocator {
         return base.appendingPathComponent("Tscribe/models", isDirectory: true)
     }
 
-    /// Where the Lite edition installs the downloaded large-v3 model.
+    /// Where the Standard edition installs the downloaded large-v3 model.
     static var downloadedModelURL: URL {
         appSupportModelsDir.appendingPathComponent("ggml-large-v3.bin")
     }
@@ -51,7 +51,7 @@ enum EngineLocator {
     }
 
     static var model: URL? {
-        // Downloaded (Lite) takes precedence so a future model upgrade or a corrupt
+        // Downloaded (Standard) takes precedence so a future model upgrade or a corrupt
         // bundled copy can be superseded without touching the app bundle.
         let downloaded = downloadedModelURL
         if FileManager.default.fileExists(atPath: downloaded.path) {
@@ -79,8 +79,8 @@ enum EngineLocator {
         return nil
     }
 
-    /// True when the large-v3 model is bundled inside the app (Full edition).
-    /// False in the Lite edition, which downloads it on first launch.
+    /// True when the large-v3 model is bundled inside the app (Complete edition).
+    /// False in the Standard edition, which downloads it on first launch.
     static var isModelBundled: Bool {
         Bundle.main.url(forResource: "ggml-large-v3", withExtension: "bin") != nil
     }

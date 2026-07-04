@@ -1,9 +1,9 @@
-#if LITE
+#if DOWNLOAD_MODEL
 import SwiftUI
 import AppKit
 import UniformTypeIdentifiers
 
-/// First-launch screen for the Lite edition: a one-time download of the speech
+/// First-launch screen for the Standard edition: a one-time download of the speech
 /// model. Mirrors the app's other full-window screens (`MissingMediaView` for the
 /// icon + text + button layout, `WorkingView` for the progress readout).
 struct OnboardingView: View {

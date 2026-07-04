@@ -5,18 +5,20 @@ set -euo pipefail
 # Free (no Apple Developer account). First launch on another Mac:
 # right-click the app → Open → Open (one-time Gatekeeper bypass).
 #
-# Usage: package.sh [--edition full|lite]
+# Usage: package.sh [--edition standard|complete]
 #
-#   full  (default)  Bundles whisper-cli + Silero VAD + the 2.9 GB large-v3 model.
-#                    Transcribes 100% offline from first launch. ~2.7 GB DMG.
-#                    Distributed manually (too big for GitHub's 2 GiB limit).
+#   standard  (default)  Bundles whisper-cli + Silero VAD only (a few-MB DMG). The
+#                        2.9 GB large-v3 model is downloaded once on first launch.
+#                        Built with the DOWNLOAD_MODEL flag (ReleaseStandard config)
+#                        so the downloader + onboarding are compiled in. The primary
+#                        distribution → Tscribe.dmg.
 #
-#   lite             Bundles whisper-cli + Silero VAD only (a few-MB DMG). The
-#                    large-v3 model is downloaded once on first launch. Built with
-#                    the LITE compile flag (ReleaseLite config) so the downloader
-#                    + onboarding are compiled in.
+#   complete             Bundles whisper-cli + Silero VAD + the 2.9 GB large-v3 model.
+#                        Transcribes 100% offline from first launch. ~2.7 GB DMG,
+#                        distributed manually (too big for GitHub's 2 GiB limit).
+#                        → Tscribe-Complete.dmg.
 
-EDITION="full"
+EDITION="standard"
 while [ $# -gt 0 ]; do
   case "$1" in
     --edition) EDITION="${2:-}"; shift 2 ;;
@@ -24,7 +26,7 @@ while [ $# -gt 0 ]; do
     *) echo "Unknown argument: $1"; exit 2 ;;
   esac
 done
-case "$EDITION" in full|lite) ;; *) echo "Invalid edition: $EDITION (expected full|lite)"; exit 2 ;; esac
+case "$EDITION" in standard|complete) ;; *) echo "Invalid edition: $EDITION (expected standard|complete)"; exit 2 ;; esac
 
 PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 ENGINE_DIR="$PROJECT_DIR/engine"
@@ -38,12 +40,12 @@ CLI="$ENGINE_DIR/whisper-cli"
 VAD="$ENGINE_DIR/ggml-silero-v5.1.2.bin"
 MODEL="$WHISPER_DIR/models/ggml-large-v3.bin"
 
-if [ "$EDITION" = "full" ]; then
+if [ "$EDITION" = "complete" ]; then
   CONFIG="Release"
-  DMG_NAME="Tscribe.dmg"
+  DMG_NAME="Tscribe-Complete.dmg"
 else
-  CONFIG="ReleaseLite"
-  DMG_NAME="Tscribe-Lite.dmg"
+  CONFIG="ReleaseStandard"
+  DMG_NAME="Tscribe.dmg"
 fi
 
 echo "==> Edition: $EDITION  (config: $CONFIG)"
@@ -52,14 +54,14 @@ echo "==> Checking engine artifacts"
 for f in "$CLI" "$VAD"; do
   [ -f "$f" ] || { echo "   MISSING: $f"; exit 1; }
 done
-if [ "$EDITION" = "full" ]; then
-  [ -f "$MODEL" ] || { echo "   MISSING: $MODEL (required for the full edition)"; exit 1; }
+if [ "$EDITION" = "complete" ]; then
+  [ -f "$MODEL" ] || { echo "   MISSING: $MODEL (required for the Complete edition)"; exit 1; }
 fi
 
-# Lite drift-guard: the model the Lite app will download must be the exact bytes the
-# Full edition bundles. Verify the pinned SHA in ModelInstaller.swift against the
-# canonical local model when it's available (skipped on CI, which has no model).
-if [ "$EDITION" = "lite" ]; then
+# Standard drift-guard: the model the Standard app will download must be the exact
+# bytes the Complete edition bundles. Verify the pinned SHA in ModelInstaller.swift
+# against the canonical local model when it's available (skipped on CI, no model).
+if [ "$EDITION" = "standard" ]; then
   EXPECTED_SHA="$(grep -Eo 'sha256 = "[0-9a-f]{64}"' "$PROJECT_DIR/Sources/Core/ModelInstaller.swift" | grep -Eo '[0-9a-f]{64}' | head -1)"
   [ -n "$EXPECTED_SHA" ] || { echo "   Could not read pinned model SHA from ModelInstaller.swift"; exit 1; }
   if [ -f "$MODEL" ]; then
@@ -69,7 +71,7 @@ if [ "$EDITION" = "lite" ]; then
       echo "   SHA MISMATCH:"
       echo "     pinned (ModelSpec):  $EXPECTED_SHA"
       echo "     local model:         $ACTUAL_SHA"
-      echo "   Update ModelSpec (and re-verify the Full bundle) before shipping Lite."
+      echo "   Update ModelSpec (and re-verify the Complete bundle) before shipping."
       exit 1
     fi
     echo "   OK: model matches pinned SHA ($EXPECTED_SHA)"
@@ -93,19 +95,19 @@ mkdir -p "$RES"
 cp "$CLI" "$RES/whisper-cli"
 cp "$VAD" "$RES/ggml-silero-v5.1.2.bin"
 chmod +x "$RES/whisper-cli"
-if [ "$EDITION" = "full" ]; then
+if [ "$EDITION" = "complete" ]; then
   echo "    + bundling large-v3 model (2.9 GB)"
   cp "$MODEL" "$RES/ggml-large-v3.bin"
 else
   echo "    (skipping large-v3 model — downloaded on first launch)"
 fi
 
-# Full offline-audit: the "no network at all" claim should be auditable — the
-# Hugging Face URL only exists behind #if LITE, so it must be absent from Full.
-if [ "$EDITION" = "full" ]; then
-  echo "==> Offline audit: confirming no download URL in the Full binary"
+# Complete offline-audit: the "no network at all" claim should be auditable — the
+# Hugging Face URL only exists behind #if DOWNLOAD_MODEL, so it must be absent here.
+if [ "$EDITION" = "complete" ]; then
+  echo "==> Offline audit: confirming no download URL in the Complete binary"
   if strings -a "$APP/Contents/MacOS/$APP_NAME" | grep -q "huggingface.co"; then
-    echo "   FAIL: found a Hugging Face URL in the Full build — networking code leaked in."
+    echo "   FAIL: found a Hugging Face URL in the Complete build — networking code leaked in."
     exit 1
   fi
   echo "   OK: no download URL present"
@@ -145,7 +147,7 @@ else
   echo "   note: missing background/DS_Store template — building a plain DMG"
 fi
 
-# Read-write DMG sized to contents + proportional headroom (the 2.9 GB Full app
+# Read-write DMG sized to contents + proportional headroom (the 2.9 GB Complete app
 # needs real slack, not a flat pad).
 STAGE_MB=$(du -sm "$STAGE" | cut -f1)
 SIZE_MB=$(( STAGE_MB + STAGE_MB / 5 + 100 ))

@@ -12,5 +12,5 @@ Build Tscribe for development:
 
 Notes:
 - Debug builds use the `~/Developer/whisper.cpp` fallback for the engine + model, so no bundling is needed.
-- To exercise the Lite download/onboarding code paths, build `-configuration ReleaseLite` instead
-  (this defines the `LITE` compile flag).
+- To exercise the Standard download/onboarding code paths, build `-configuration ReleaseStandard` instead
+  (this defines the `DOWNLOAD_MODEL` compile flag).

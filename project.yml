@@ -4,14 +4,14 @@ options:
   deploymentTarget:
     macOS: "14.0"
   createIntermediateGroups: true
-# Build configurations. `ReleaseLite` is the download-on-first-launch edition:
-# it inherits Release but defines the `LITE` compilation condition, which turns
-# on the model downloader + onboarding flow. `Release` is the full, offline
-# edition (model bundled) and stays byte-identical to the 1.0 build.
+# Build configurations. `ReleaseStandard` is the download-on-first-launch edition:
+# it inherits Release but defines the `DOWNLOAD_MODEL` compilation condition, which turns
+# on the model downloader + onboarding flow. `Release` is the Complete edition
+# (model bundled, fully offline) and stays byte-identical to the 1.0 build.
 configs:
   Debug: debug
   Release: release
-  ReleaseLite: release
+  ReleaseStandard: release
 settings:
   base:
     MARKETING_VERSION: "1.1.0"
@@ -36,10 +36,10 @@ targets:
         COMBINE_HIDPI_IMAGES: YES
         ENABLE_USER_SCRIPT_SANDBOXING: NO
       configs:
-        # Lite edition: compile in the downloader + onboarding (guarded by #if LITE).
-        ReleaseLite:
-          SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) LITE"
-# Shared scheme so `xcodebuild -scheme tscribe -configuration <Debug|Release|ReleaseLite>`
+        # Standard edition: compile in the downloader + onboarding (guarded by #if DOWNLOAD_MODEL).
+        ReleaseStandard:
+          SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) DOWNLOAD_MODEL"
+# Shared scheme so `xcodebuild -scheme tscribe -configuration <Debug|Release|ReleaseStandard>`
 # works deterministically on a fresh checkout (e.g. CI), not just after opening in Xcode.
 schemes:
   tscribe:

@@ -65,7 +65,7 @@ struct DropView: View {
                     .multilineTextAlignment(.center)
                     .frame(maxWidth: 470)
 
-                // Lite edition only: the model was fetched once at setup. Kept honest
+                // Standard edition only: the model was fetched once at setup. Kept honest
                 // and scoped — the privacy promise is about the user's recordings.
                 if !EngineLocator.isModelBundled {
                     Text("Speech model downloaded once at setup. Your recordings and transcripts never leave this Mac.")

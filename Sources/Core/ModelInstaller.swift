@@ -1,12 +1,12 @@
-#if LITE
+#if DOWNLOAD_MODEL
 import Foundation
 import CryptoKit
 
-/// Identity of the large-v3 model the Lite edition downloads on first launch.
+/// Identity of the large-v3 model the Standard edition downloads on first launch.
 ///
-/// These constants are captured from the exact artifact the Full edition bundles,
+/// These constants are captured from the exact artifact the Complete edition bundles,
 /// and are enforced at package time by the drift-guard in `scripts/package.sh`,
-/// so the Lite download is guaranteed to be the same bytes.
+/// so the Standard download is guaranteed to be the same bytes.
 enum ModelSpec {
     static let url = URL(string: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3.bin")!
     static let expectedBytes: Int64 = 3_095_033_483
@@ -51,7 +51,7 @@ enum InstallError: LocalizedError, Equatable {
     }
 }
 
-/// Downloads, verifies, and installs the large-v3 model for the Lite edition.
+/// Downloads, verifies, and installs the large-v3 model for the Standard edition.
 ///
 /// Robustness: streams straight to disk (never 2.9 GB in RAM), pre-checks free
 /// space, verifies size + SHA-256 before installing, installs atomically (a

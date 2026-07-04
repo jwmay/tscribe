@@ -9,10 +9,10 @@ struct ContentView: View {
             case .idle, .failed:
                 DropView(model: model)
             case .onboarding:
-                #if LITE
+                #if DOWNLOAD_MODEL
                 OnboardingView(model: model, installer: model.installer)
                 #else
-                DropView(model: model)   // unreachable in Full; keeps the switch exhaustive
+                DropView(model: model)   // unreachable in Complete builds; keeps the switch exhaustive
                 #endif
             case .extracting, .transcribing:
                 WorkingView(model: model)
