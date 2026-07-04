@@ -6,15 +6,19 @@ import Foundation
 /// - Downloaded: the Lite edition writes the model to Application Support at first
 ///   launch (see `ModelInstaller`), outside the signed app bundle.
 /// - Bundled: the Full edition ships the 2.9 GB model inside `Contents/Resources`.
-/// - Dev-fallback: during development we use the local whisper.cpp checkout so we
-///   can iterate without copying a 3 GB model into every build.
+/// - Dev-fallback (**`#if DEBUG` only**): during development we use the local
+///   whisper.cpp checkout so we can iterate without bundling or downloading a 3 GB
+///   model. Shipped Release/ReleaseLite builds never look at `~/Developer/whisper.cpp`
+///   — so a packaged Lite build reliably triggers first-launch onboarding on any Mac.
 ///
 /// `whisperCLI` and `vadModel` are bundled in **both** editions (they are small),
 /// so only the big model is ever downloaded.
 enum EngineLocator {
+    #if DEBUG
     private static func devPath(_ rel: String) -> URL {
         URL(fileURLWithPath: (("~/Developer/whisper.cpp/" + rel) as NSString).expandingTildeInPath)
     }
+    #endif
 
     // MARK: Writable install location (Lite edition)
 
@@ -39,8 +43,11 @@ enum EngineLocator {
            FileManager.default.isExecutableFile(atPath: bundled.path) {
             return bundled
         }
+        #if DEBUG
         let dev = devPath("build/bin/whisper-cli")
-        return FileManager.default.isExecutableFile(atPath: dev.path) ? dev : nil
+        if FileManager.default.isExecutableFile(atPath: dev.path) { return dev }
+        #endif
+        return nil
     }
 
     static var model: URL? {
@@ -53,8 +60,11 @@ enum EngineLocator {
         if let bundled = Bundle.main.url(forResource: "ggml-large-v3", withExtension: "bin") {
             return bundled
         }
+        #if DEBUG
         let dev = devPath("models/ggml-large-v3.bin")
-        return FileManager.default.fileExists(atPath: dev.path) ? dev : nil
+        if FileManager.default.fileExists(atPath: dev.path) { return dev }
+        #endif
+        return nil
     }
 
     /// Silero VAD model (optional — enables the "reduce silence hallucinations" feature).
@@ -62,8 +72,11 @@ enum EngineLocator {
         if let bundled = Bundle.main.url(forResource: "ggml-silero-v5.1.2", withExtension: "bin") {
             return bundled
         }
+        #if DEBUG
         let dev = devPath("models/ggml-silero-v5.1.2.bin")
-        return FileManager.default.fileExists(atPath: dev.path) ? dev : nil
+        if FileManager.default.fileExists(atPath: dev.path) { return dev }
+        #endif
+        return nil
     }
 
     /// True when the large-v3 model is bundled inside the app (Full edition).
