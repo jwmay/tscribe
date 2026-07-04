@@ -7,6 +7,9 @@ DerivedData/
 .swiftpm/
 dist/
 
+# Local test media (recordings kept for manual testing — not tracked)
+test-media/
+
 # Bundled engine artifacts (large — copied in at build time, not committed)
 Vendor/
 *.bin

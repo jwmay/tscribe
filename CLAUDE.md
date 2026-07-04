@@ -89,6 +89,9 @@ is present (`rm -rf ~/Library/Application\ Support/Tscribe/models`), and launch 
 directory with a copy of the model. For fast iteration, temporarily point `ModelSpec.url` at a tiny
 model (e.g. `ggml-tiny.bin`) behind `#if DEBUG`.
 
+Sample recordings for manual testing live in the gitignored `test-media/` directory (not tracked —
+they're large; keep your own local copies there).
+
 ## Versioning
 
 Both editions share the version. Bump the two values in `project.yml`
