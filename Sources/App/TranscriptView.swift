@@ -72,6 +72,7 @@ struct TranscriptView: View {
     @State private var showClockSheet = false
     @State private var pendingScrollHop: DispatchWorkItem?
     @State private var pendingFollowScroll: DispatchWorkItem?
+    @State private var lastFollowedSegment: UUID?
     @FocusState private var searchFocused: Bool
 
     var body: some View {
@@ -227,16 +228,11 @@ struct TranscriptView: View {
                         // whose inputs changed, not the whole lazy list.
                         let shared = listState
                         ForEach(model.turnGroups) { group in
-                            let hasPlayhead = shared.currentSegID.map { id in
-                                group.segments.contains { $0.id == id }
-                            } ?? false
                             TurnBlock(
                                 group: group,
                                 displayName: group.speaker.flatMap { model.transcript?.displayName(forSpeaker: $0) },
                                 clockOffset: shared.clockOffset,
                                 isEditing: shared.isEditing,
-                                activeSegmentID: hasPlayhead ? shared.currentSegID : nil,
-                                playhead: hasPlayhead ? shared.time : nil,
                                 activeMatchID: shared.activeMatchID.map { id in
                                     group.segments.contains { $0.id == id } ? id : nil
                                 } ?? nil,
@@ -245,7 +241,8 @@ struct TranscriptView: View {
                                 contextMatchIDs: shared.contextHighlight
                                     ? Set(group.segments.filter { model.matchesSearch($0) }.map(\.id)) : [],
                                 searchToken: shared.searchToken,
-                                model: model)
+                                model: model,
+                                clock: model.clock)
                                 .equatable()
                                 .id(group.id)
                         }
@@ -257,12 +254,17 @@ struct TranscriptView: View {
                     }
                     .padding(16)
                 }
-                .onChange(of: model.currentSegmentID) { _, id in
+                .onReceive(model.clock.$time) { _ in
                     // Follow the playhead ONLY during passive playback: never
                     // while paused, never right after the user clicked a word
                     // (they're looking at what they clicked — don't scroll it
                     // away), never while stepping matches, never to filtered-out
                     // rows. Coalesced so at most one follow is in flight.
+                    // (onReceive is an action — reading the clock here does NOT
+                    // subscribe this view's body to the 10 Hz tick.)
+                    let id = model.currentSegmentID
+                    guard id != lastFollowedSegment else { return }
+                    lastFollowedSegment = id
                     pendingFollowScroll?.cancel()
                     guard model.isPlaying,
                           Date().timeIntervalSince(model.lastUserSeekAt) > 1.0,
@@ -434,8 +436,6 @@ struct TranscriptView: View {
     /// Everything the row views need from the model, gathered once per update
     /// and handed down as plain values (rows do not observe the model).
     private struct ListState {
-        var currentSegID: UUID?
-        var time: TimeInterval
         var isEditing: Bool
         var activeMatchID: UUID?
         var selected: Set<UUID>
@@ -447,8 +447,6 @@ struct TranscriptView: View {
     private var listState: ListState {
         let q = model.appliedSearchText.trimmingCharacters(in: .whitespaces)
         return ListState(
-            currentSegID: model.currentSegmentID,
-            time: model.currentTime,
             isEditing: model.isEditing,
             activeMatchID: model.activeMatchID,
             selected: model.selectedSegmentIDs,
@@ -469,21 +467,18 @@ private struct TurnBlock: View, Equatable {
     let displayName: String?
     let clockOffset: TimeInterval?
     let isEditing: Bool
-    let activeSegmentID: UUID?
-    let playhead: TimeInterval?
     let activeMatchID: UUID?
     let selectedIDs: Set<UUID>
     let contextMatchIDs: Set<UUID>
     let searchToken: String?
     let model: TranscriberModel      // actions only — deliberately not @ObservedObject
+    let clock: PlaybackClock         // rows subscribe individually — not observed here
 
     static func == (a: TurnBlock, b: TurnBlock) -> Bool {
         a.group == b.group
             && a.displayName == b.displayName
             && a.clockOffset == b.clockOffset
             && a.isEditing == b.isEditing
-            && a.activeSegmentID == b.activeSegmentID
-            && a.playhead == b.playhead
             && a.activeMatchID == b.activeMatchID
             && a.selectedIDs == b.selectedIDs
             && a.contextMatchIDs == b.contextMatchIDs
@@ -509,13 +504,12 @@ private struct TurnBlock: View, Equatable {
                            showTimestamp: group.speaker == nil,
                            clockOffset: clockOffset,
                            isEditing: isEditing,
-                           isActive: seg.id == activeSegmentID,
-                           playhead: seg.id == activeSegmentID ? playhead : nil,
                            isSelected: selectedIDs.contains(seg.id),
                            isActiveMatch: seg.id == activeMatchID,
                            isContextMatch: contextMatchIDs.contains(seg.id),
                            searchToken: searchToken,
-                           model: model)
+                           model: model,
+                           clock: clock)
                     .equatable()
                     .id(seg.id)
             }
@@ -661,21 +655,25 @@ private struct SegmentRow: View, Equatable {
     let showTimestamp: Bool
     let clockOffset: TimeInterval?
     let isEditing: Bool
-    let isActive: Bool
-    let playhead: TimeInterval?      // non-nil only when this row is under the playhead
     let isSelected: Bool
     let isActiveMatch: Bool
     let isContextMatch: Bool
     let searchToken: String?
     let model: TranscriberModel      // actions only — not observed
+    let clock: PlaybackClock         // subscribed below; NOT @ObservedObject
+
+    // Playhead state, local to this row. Updated from the clock via onReceive
+    // with compare-before-set: for the ~299 rows not under the playhead the
+    // write is a no-op and SwiftUI invalidates nothing — a tick re-renders
+    // only the single active row.
+    @State private var isActive = false
+    @State private var activeWordID: UUID?
 
     static func == (a: SegmentRow, b: SegmentRow) -> Bool {
         a.segment == b.segment
             && a.showTimestamp == b.showTimestamp
             && a.clockOffset == b.clockOffset
             && a.isEditing == b.isEditing
-            && a.isActive == b.isActive
-            && a.playhead == b.playhead
             && a.isSelected == b.isSelected
             && a.isActiveMatch == b.isActiveMatch
             && a.isContextMatch == b.isContextMatch
@@ -712,7 +710,7 @@ private struct SegmentRow: View, Equatable {
                 FlowLayout(spacing: 4, lineSpacing: 6) {
                     ForEach(segment.words) { word in
                         WordChip(word: word,
-                                 isCurrent: playhead.map { $0 >= word.start && $0 < word.end } ?? false,
+                                 isCurrent: word.id == activeWordID,
                                  isMatch: isSearchMatch(word))
                             .onTapGesture { model.seek(to: word.start) }
                     }
@@ -745,6 +743,14 @@ private struct SegmentRow: View, Equatable {
             } else {
                 SpeakerAssignMenu(model: model, segmentIDs: [segment.id], current: segment.speaker)
             }
+        }
+        .onReceive(clock.$time) { t in
+            let nowActive = t >= segment.start && t < segment.end
+            if nowActive != isActive { isActive = nowActive }
+            let nowWord = nowActive
+                ? segment.words.first(where: { t >= $0.start && t < $0.end })?.id
+                : nil
+            if nowWord != activeWordID { activeWordID = nowWord }
         }
     }
 

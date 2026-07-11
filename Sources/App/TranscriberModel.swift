@@ -14,6 +14,16 @@ struct TurnGroup: Identifiable, Equatable {
     var start: TimeInterval { segments.first?.start ?? 0 }
 }
 
+/// The 10 Hz playhead, deliberately isolated from TranscriberModel: publishing
+/// the tick on the main model invalidated the entire transcript view graph ten
+/// times a second, and on long documents the re-measure passes couldn't drain
+/// faster than ticks arrived — an unrecoverable beachball whenever the video
+/// was playing. Rows subscribe to this clock individually with change-gated
+/// local state, so a tick re-renders only the row under the playhead.
+final class PlaybackClock: ObservableObject {
+    @Published var time: TimeInterval = 0
+}
+
 /// Drives the whole flow: import → extract → transcribe → review/edit/export,
 /// plus auto-save and reopening saved transcripts.
 @MainActor
@@ -30,8 +40,11 @@ final class TranscriberModel: ObservableObject {
     @Published var stage: Stage = .idle
     @Published var mediaURL: URL?
     @Published var transcript: Transcript? { didSet { invalidateDerived() } }
-    @Published var currentTime: TimeInterval = 0
     @Published var isEditing = false
+
+    /// Playhead ticks live on a separate object — see `PlaybackClock`.
+    let clock = PlaybackClock()
+    var currentTime: TimeInterval { clock.time }
     @Published private(set) var player: AVPlayer?
 
     // Speaker diarization ("Identify Speakers") — runs on demand after transcription.
@@ -304,7 +317,7 @@ final class TranscriberModel: ObservableObject {
         player = nil
         transcript = nil
         mediaURL = nil
-        currentTime = 0
+        clock.time = 0
         isEditing = false
         currentDocURL = nil
         mediaMissing = false
@@ -391,7 +404,7 @@ final class TranscriberModel: ObservableObject {
         let p = AVPlayer(url: url)
         let interval = CMTime(seconds: 0.1, preferredTimescale: 600)
         timeObserver = p.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self] time in
-            MainActor.assumeIsolated { self?.currentTime = time.seconds }
+            MainActor.assumeIsolated { self?.clock.time = time.seconds }
         }
         player = p
     }
