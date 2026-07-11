@@ -52,7 +52,9 @@ shows **when it actually happened**, and makes everything **findable** — still
   equality — an update re-renders only the rows whose state changed instead
   of re-laying-out the whole list — and the filtered/grouped transcript is
   cached instead of being recomputed on every UI update (~1000× fewer
-  filter evaluations on long transcripts).
+  filter evaluations on long transcripts). The word-wrap layout also caches
+  chip measurements: SwiftUI probes a layout many times per pass, and
+  re-measuring every word's text on each probe was the remaining hot spot.
 - **Multi-track courtroom recordings** (FTR/JAVS-style, one track per
   microphone): audio extraction now mixes **all** audio tracks and
   peak-normalizes quiet recordings. Previously only the first (often nearly
