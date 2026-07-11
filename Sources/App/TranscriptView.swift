@@ -72,6 +72,7 @@ struct TranscriptView: View {
     @ObservedObject var model: TranscriberModel
     @State private var showSpeakerSheet = false
     @State private var showClockSheet = false
+    @State private var pendingScrollHop: DispatchWorkItem?
     @FocusState private var searchFocused: Bool
 
     var body: some View {
@@ -263,11 +264,14 @@ struct TranscriptView: View {
                     // never while they're stepping through search matches.
                     guard model.activeMatchID == nil,
                           let id, model.visibleSegments.contains(where: { $0.id == id }) else { return }
-                    scrollToSegment(id, proxy: proxy)
+                    scrollToSegment(id, proxy: proxy, animated: true)
                 }
                 .onChange(of: model.activeMatchID) { _, id in
                     guard let id else { return }
-                    scrollToSegment(id, proxy: proxy)
+                    // Instant, not animated: an animated long jump lays out every
+                    // row the viewport passes, and rapid ⌘G would queue dozens of
+                    // overlapping animations (the source of multi-second hangs).
+                    scrollToSegment(id, proxy: proxy, animated: false)
                 }
             }
         }
@@ -402,15 +406,23 @@ struct TranscriptView: View {
     /// lazy turn blocks, and `scrollTo` can't reach ids that haven't rendered —
     /// so scroll to the enclosing turn block first (its id is a direct child of
     /// the lazy list and always resolves), then re-center on the exact segment
-    /// once it exists.
-    private func scrollToSegment(_ id: UUID, proxy: ScrollViewProxy) {
+    /// once it exists. The second hop is cancellable: rapid stepping (⌘G held
+    /// down) must not leave a trail of stale delayed scrolls that later fight
+    /// over the viewport.
+    private func scrollToSegment(_ id: UUID, proxy: ScrollViewProxy, animated: Bool) {
+        pendingScrollHop?.cancel()
         let outer = model.turnGroups.first(where: { g in g.segments.contains(where: { $0.id == id }) })?.id ?? id
-        withAnimation(.easeInOut(duration: 0.2)) { proxy.scrollTo(outer, anchor: .center) }
-        if outer != id {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
-                withAnimation(.easeInOut(duration: 0.15)) { proxy.scrollTo(id, anchor: .center) }
-            }
+        if animated {
+            withAnimation(.easeInOut(duration: 0.2)) { proxy.scrollTo(outer, anchor: .center) }
+        } else {
+            proxy.scrollTo(outer, anchor: .center)
         }
+        guard outer != id else { return }
+        let hop = DispatchWorkItem {
+            proxy.scrollTo(id, anchor: .center)   // rows exist now; precise, instant
+        }
+        pendingScrollHop = hop
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25, execute: hop)
     }
 
     /// Everything the row views need from the model, gathered once per update

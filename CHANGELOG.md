@@ -54,7 +54,10 @@ shows **when it actually happened**, and makes everything **findable** — still
   cached instead of being recomputed on every UI update (~1000× fewer
   filter evaluations on long transcripts). The word-wrap layout also caches
   chip measurements: SwiftUI probes a layout many times per pass, and
-  re-measuring every word's text on each probe was the remaining hot spot.
+  re-measuring every word's text on each probe was a major hot spot. And
+  rapid match-stepping (⌘G held down) no longer queues overlapping animated
+  scrolls — match jumps are instant and stale scroll hops are cancelled,
+  which previously left the viewport thrashing across the lazy list.
 - **Multi-track courtroom recordings** (FTR/JAVS-style, one track per
   microphone): audio extraction now mixes **all** audio tracks and
   peak-normalizes quiet recordings. Previously only the first (often nearly
