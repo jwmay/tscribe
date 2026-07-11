@@ -69,7 +69,13 @@ shows **when it actually happened**, and makes everything **findable** — still
   The video's click-to-toggle no longer uses a gesture recognizer (avoids
   AppKit/AVKit gesture-disambiguation event holds), and per-word tooltips
   were removed (thousands of churning tracking areas; the confidence legend
-  already explains the colors). Debug builds gain a `--stress` mode that
+  already explains the colors). A captured live sample of the final wedge
+  identified a layout-estimation livelock: the word-wrap layout answered
+  width-less probes (used by the lazy list to estimate unbuilt rows) with
+  "one infinite line", making every estimated row height wildly short — the
+  scroll view's offset corrections and lazy re-phasing then fed each other
+  forever. It now answers estimates with the last real width, so estimated
+  and actual heights agree. Debug builds gain a `--stress` mode that
   storms the UI with the full interaction repertoire under a main-thread
   stall watchdog — the current build survives ~60 events/sec for a minute
   with zero stalls over 500 ms.
