@@ -6,40 +6,38 @@ import AVKit
 struct PlayerView: NSViewRepresentable {
     let player: AVPlayer?
 
-    func makeCoordinator() -> Coordinator { Coordinator() }
-
     func makeNSView(context: Context) -> AVPlayerView {
         let view = AVPlayerView()
         view.controlsStyle = .inline
         view.videoGravity = .resizeAspect
         view.player = player
         // Click anywhere on the picture to toggle play/pause (QuickTime-style).
-        // The recognizer lives on `contentOverlayView`, which sits between the
-        // video surface and the control bar — so the controls keep their clicks.
+        // A plain mouseDown-overriding view on `contentOverlayView` (which sits
+        // between the video surface and the control bar, so the controls keep
+        // their clicks). Deliberately NOT a gesture recognizer: recognizers
+        // join AppKit's gesture-disambiguation machinery alongside AVKit's own,
+        // which can hold/route events; a raw mouseDown cannot wait on anything.
         if let overlay = view.contentOverlayView {
-            overlay.addGestureRecognizer(NSClickGestureRecognizer(
-                target: context.coordinator, action: #selector(Coordinator.togglePlayback)))
+            let toggler = ClickToToggleView(frame: overlay.bounds)
+            toggler.autoresizingMask = [.width, .height]
+            toggler.onClick = { [weak view] in
+                guard let player = view?.player else { return }
+                if player.timeControlStatus == .playing { player.pause() } else { player.play() }
+            }
+            overlay.addSubview(toggler)
         }
-        context.coordinator.playerView = view
         return view
     }
 
     func updateNSView(_ nsView: AVPlayerView, context: Context) {
         if nsView.player !== player { nsView.player = player }
-        context.coordinator.playerView = nsView
     }
 
-    final class Coordinator: NSObject {
-        weak var playerView: AVPlayerView?
-
-        @objc func togglePlayback() {
-            guard let player = playerView?.player else { return }
-            if player.timeControlStatus == .playing {
-                player.pause()
-            } else {
-                player.play()
-            }
-        }
+    /// Fills the video's content-overlay area; toggles on plain left-click.
+    final class ClickToToggleView: NSView {
+        var onClick: (() -> Void)?
+        override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+        override func mouseDown(with event: NSEvent) { onClick?() }
     }
 }
 
@@ -785,17 +783,10 @@ private struct WordChip: View {
     let isCurrent: Bool
     var isMatch: Bool = false
 
-    @ViewBuilder var body: some View {
-        // Tooltips install tracking areas — only attach one where it's needed,
-        // not on every one of thousands of chips.
-        if word.confidence < 0.7 {
-            base.help("Low confidence (\(Int(word.confidence * 100))%) — verify against the audio")
-        } else {
-            base
-        }
-    }
-
-    private var base: some View {
+    // No per-chip tooltips: `.help` installs an AppKit tracking area per chip,
+    // and thousands of tracking areas churning while rows rebuild mid-hover is
+    // a classic main-thread wedge. The confidence legend explains the colors.
+    var body: some View {
         Text(word.text)
             .foregroundColor(color)
             .underline(word.confidence < 0.5, color: .red)

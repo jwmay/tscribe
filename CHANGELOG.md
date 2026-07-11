@@ -66,6 +66,13 @@ shows **when it actually happened**, and makes everything **findable** — still
   longer re-centers the view under your cursor, playing or paused), and all
   programmatic scrolls are instant — overlapping scroll animations were the
   common thread in every hang, so the class is gone, not just the cases.
+  The video's click-to-toggle no longer uses a gesture recognizer (avoids
+  AppKit/AVKit gesture-disambiguation event holds), and per-word tooltips
+  were removed (thousands of churning tracking areas; the confidence legend
+  already explains the colors). Debug builds gain a `--stress` mode that
+  storms the UI with the full interaction repertoire under a main-thread
+  stall watchdog — the current build survives ~60 events/sec for a minute
+  with zero stalls over 500 ms.
 - **Multi-track courtroom recordings** (FTR/JAVS-style, one track per
   microphone): audio extraction now mixes **all** audio tracks and
   peak-normalizes quiet recordings. Previously only the first (often nearly

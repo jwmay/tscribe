@@ -93,6 +93,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             NSApplication.shared.applicationIconImage = icon
         }
         installSpaceKeyMonitor()
+        #if DEBUG
+        startStressModeIfRequested()
+        #endif
     }
 
     /// Spacebar toggles play/pause — but never while typing or in a sheet.
@@ -123,4 +126,91 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             pendingURL = url   // opened before the window/model was ready
         }
     }
+
+    #if DEBUG
+    // MARK: Stress mode (debug builds only)
+    //
+    // `Tscribe --stress` with TSCRIBE_STRESS_DOC=<path.tscribe> drives a storm
+    // of the interactions that have produced user-reported hangs — rapid seeks
+    // (word clicks), play/pause spam, filter typing, match stepping, selection
+    // toggles — at 8–25 events/sec, while a watchdog thread logs any main-thread
+    // stall. Used with external `sample` capture to diagnose hangs with real
+    // symbolized stacks instead of guesswork.
+
+    func startStressModeIfRequested() {
+        guard ProcessInfo.processInfo.arguments.contains("--stress") else { return }
+        Self.startMainThreadWatchdog()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+            guard let model = self?.model else { NSLog("STRESS: no model"); return }
+            if let path = ProcessInfo.processInfo.environment["TSCRIBE_STRESS_DOC"] {
+                model.openDocument(URL(fileURLWithPath: path))
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                MainActor.assumeIsolated {
+                    NSLog("STRESS: storm starting")
+                    model.player?.play()
+                    Self.runStorm(on: model, remaining: 900)   // ~60-90s of chaos
+                }
+            }
+        }
+    }
+
+    @MainActor private static func runStorm(on model: TranscriberModel, remaining: Int) {
+        guard remaining > 0 else { NSLog("STRESS: storm done"); return }
+        let queries = ["c", "co", "comp", "compli", "compliance", "care", "care plan", "we", ""]
+        let duration = model.player?.currentItem?.duration.seconds ?? 60
+        switch Int.random(in: 0..<20) {
+        case 0...6:     // rapid word-click seeks
+            model.seek(to: Double.random(in: 0..<max(1, duration - 1)))
+        case 7...9:     // spacebar spam
+            model.togglePlayback()
+        case 10...12:   // typing in the filter
+            model.searchText = queries.randomElement()!
+        case 13:        // ⌘G
+            model.stepMatch(1)
+        case 14:        // ⌘-click selection
+            if let seg = model.visibleSegments.randomElement() { model.toggleSelection(seg.id) }
+        case 15:        // flip search mode
+            model.searchMode = model.searchMode == .filter ? .context : .filter
+        case 16:        // edit-mode toggle
+            model.isEditing.toggle()
+        case 17:        // speaker filter flips
+            model.speakerFilter = [nil, "A", "B", "C", "D"].randomElement()!
+        case 18:        // bulk reassignment (regroups turns) + undo pressure
+            model.selectAllMatches()
+            if !model.selectedSegmentIDs.isEmpty {
+                model.assignSpeaker(["A", "B", "C", "D"].randomElement()!,
+                                    toSegments: Array(model.selectedSegmentIDs), undoManager: nil)
+            }
+        default:        // window resize thrash (relayout everything)
+            if let w = NSApp.windows.first(where: { $0.isVisible }) {
+                var f = w.frame
+                f.size.width = CGFloat.random(in: 1080...1800)
+                f.size.height = CGFloat.random(in: 560...1100)
+                w.setFrame(f, display: true)
+            }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + Double.random(in: 0.015...0.06)) {
+            MainActor.assumeIsolated { runStorm(on: model, remaining: remaining - 1) }
+        }
+    }
+
+    /// Logs whenever the main thread takes >0.5s to service an async ping.
+    private static func startMainThreadWatchdog() {
+        Thread.detachNewThread {
+            while true {
+                let t0 = Date()
+                let sem = DispatchSemaphore(value: 0)
+                DispatchQueue.main.async { sem.signal() }
+                if sem.wait(timeout: .now() + 10) == .timedOut {
+                    NSLog("STRESS: STALL >10000 ms (main thread wedged)")
+                } else {
+                    let ms = Date().timeIntervalSince(t0) * 1000
+                    if ms > 500 { NSLog("STRESS: STALL %.0f ms", ms) }
+                }
+                Thread.sleep(forTimeInterval: 0.25)
+            }
+        }
+    }
+    #endif
 }
