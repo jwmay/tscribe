@@ -80,6 +80,7 @@ struct TranscriptView: View {
     @State private var showSpeakerSheet = false
     @State private var showClockSheet = false
     @State private var pendingScrollHop: DispatchWorkItem?
+    @State private var pendingFollowScroll: DispatchWorkItem?
     @State private var materializedRows = MaterializedRows()
     @FocusState private var searchFocused: Bool
 
@@ -269,12 +270,21 @@ struct TranscriptView: View {
                     .padding(16)
                 }
                 .onChange(of: model.currentSegmentID) { _, id in
-                    // Don't fight the user: only follow the playhead to segments
-                    // that are actually visible under the current filter, and
-                    // never while they're stepping through search matches.
-                    guard model.activeMatchID == nil,
+                    // Follow the playhead ONLY during playback. While paused, a
+                    // segment change means the user clicked a word — chasing
+                    // their clicks with re-centering scrolls both fights them
+                    // and (clicked rapidly) queues overlapping animations.
+                    // Also: never while stepping matches, never to filtered-out
+                    // rows, and coalesced so at most one follow is in flight.
+                    pendingFollowScroll?.cancel()
+                    guard model.isPlaying,
+                          model.activeMatchID == nil,
                           let id, model.visibleSegments.contains(where: { $0.id == id }) else { return }
-                    scrollToSegment(id, proxy: proxy, animated: true)
+                    let work = DispatchWorkItem {
+                        scrollToSegment(id, proxy: proxy, animated: true)
+                    }
+                    pendingFollowScroll = work
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.2, execute: work)
                 }
                 .onChange(of: model.activeMatchID) { _, id in
                     guard let id else { return }

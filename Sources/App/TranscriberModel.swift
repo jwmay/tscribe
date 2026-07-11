@@ -404,6 +404,9 @@ final class TranscriberModel: ObservableObject {
                      toleranceBefore: .zero, toleranceAfter: .zero)
     }
 
+    /// True while the video is actually playing (read at event time; not for rendering).
+    var isPlaying: Bool { player?.timeControlStatus == .playing }
+
     /// Toggle play/pause (spacebar, and clicking the video picture).
     func togglePlayback() {
         guard let player else { return }

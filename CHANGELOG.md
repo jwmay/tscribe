@@ -61,7 +61,10 @@ shows **when it actually happened**, and makes everything **findable** — still
   which previously left the viewport thrashing across the lazy list. Search
   filtering is debounced (~0.2 s): fast typing updates the field instantly
   but rebuilds the row set once per pause instead of once per keystroke,
-  and rows enter/leave the list without transition bookkeeping.
+  and rows enter/leave the list without transition bookkeeping. Playhead
+  auto-follow now runs only during playback (clicking words while paused no
+  longer re-centers the view under your cursor) and is coalesced so rapid
+  clicks can't queue overlapping scroll animations.
 - **Multi-track courtroom recordings** (FTR/JAVS-style, one track per
   microphone): audio extraction now mixes **all** audio tracks and
   peak-normalizes quiet recordings. Previously only the first (often nearly
