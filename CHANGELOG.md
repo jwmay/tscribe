@@ -58,7 +58,10 @@ shows **when it actually happened**, and makes everything **findable** — still
   re-measuring every word's text on each probe was a major hot spot. And
   rapid match-stepping (⌘G held down) no longer queues overlapping animated
   scrolls — match jumps are instant and stale scroll hops are cancelled,
-  which previously left the viewport thrashing across the lazy list.
+  which previously left the viewport thrashing across the lazy list. Search
+  filtering is debounced (~0.2 s): fast typing updates the field instantly
+  but rebuilds the row set once per pause instead of once per keystroke,
+  and rows enter/leave the list without transition bookkeeping.
 - **Multi-track courtroom recordings** (FTR/JAVS-style, one track per
   microphone): audio extraction now mixes **all** audio tracks and
   peak-normalizes quiet recordings. Previously only the first (often nearly

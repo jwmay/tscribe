@@ -50,14 +50,50 @@ final class TranscriberModel: ObservableObject {
         var label: String { self == .filter ? "Filter" : "In context" }
     }
 
-    @Published var searchText = "" { didSet { if oldValue != searchText { activeMatchID = nil; invalidateDerived() } } }
+    /// What the search field shows (updates on every keystroke).
+    @Published var searchText = "" {
+        didSet { if oldValue != searchText { scheduleFilterApply() } }
+    }
+    /// What the transcript list is actually filtered by. Debounced from
+    /// `searchText`: rebuilding the row set is the expensive part (hundreds of
+    /// rows enter/leave the lazy list), so it happens once per typing pause
+    /// instead of once per keystroke. Clearing applies immediately.
+    @Published private(set) var appliedSearchText = "" {
+        didSet { if oldValue != appliedSearchText { activeMatchID = nil; invalidateDerived() } }
+    }
+    private var filterApplyWork: DispatchWorkItem?
+
     @Published var speakerFilter: String? = nil { didSet { if oldValue != speakerFilter { activeMatchID = nil; invalidateDerived() } } }
     @Published var searchMode: SearchMode = .filter { didSet { if oldValue != searchMode { activeMatchID = nil; invalidateDerived() } } }
     /// The match currently stepped-to in context mode (strong highlight + scroll target).
     @Published var activeMatchID: UUID? = nil
 
-    /// True when a text query is in effect.
-    var isSearchActive: Bool { !searchText.trimmingCharacters(in: .whitespaces).isEmpty }
+    private func scheduleFilterApply() {
+        filterApplyWork?.cancel()
+        // Apply a cleared field immediately — no lag getting the transcript back.
+        if searchText.trimmingCharacters(in: .whitespaces).isEmpty {
+            filterApplyWork = nil
+            appliedSearchText = searchText
+            return
+        }
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            MainActor.assumeIsolated { self.flushSearchFilter() }
+        }
+        filterApplyWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2, execute: work)
+    }
+
+    /// Apply any pending search text right now (used before match stepping /
+    /// select-all so those always act on what the user sees in the field).
+    func flushSearchFilter() {
+        filterApplyWork?.cancel()
+        filterApplyWork = nil
+        if appliedSearchText != searchText { appliedSearchText = searchText }
+    }
+
+    /// True when a text query is in effect (on the applied, debounced query).
+    var isSearchActive: Bool { !appliedSearchText.trimmingCharacters(in: .whitespaces).isEmpty }
 
     // MARK: Derived view state (cached)
     //
@@ -82,11 +118,11 @@ final class TranscriberModel: ObservableObject {
             return
         }
         switch searchMode {
-        case .filter:  cachedVisible = t.filteredSegments(query: searchText, speaker: speakerFilter)
+        case .filter:  cachedVisible = t.filteredSegments(query: appliedSearchText, speaker: speakerFilter)
         case .context: cachedVisible = t.filteredSegments(query: "", speaker: speakerFilter)
         }
         cachedMatchIDs = isSearchActive
-            ? t.filteredSegments(query: searchText, speaker: speakerFilter).map(\.id)
+            ? t.filteredSegments(query: appliedSearchText, speaker: speakerFilter).map(\.id)
             : []
         // Group consecutive same-speaker segments into dialogue turns. When not
         // diarized (speaker == nil), every segment is its own group.
@@ -123,7 +159,7 @@ final class TranscriberModel: ObservableObject {
     /// O(1) per-row match test (used for context-mode row highlighting).
     func matchesSearch(_ seg: Segment) -> Bool {
         guard isSearchActive, let t = transcript else { return false }
-        let q = searchText.trimmingCharacters(in: .whitespaces)
+        let q = appliedSearchText.trimmingCharacters(in: .whitespaces)
         if seg.text.localizedCaseInsensitiveContains(q) { return true }
         if let name = t.displayName(forSpeaker: seg.speaker),
            name.localizedCaseInsensitiveContains(q) { return true }
@@ -132,6 +168,7 @@ final class TranscriberModel: ObservableObject {
 
     /// Step to the next (+1) / previous (-1) match, wrapping at the ends.
     func stepMatch(_ delta: Int) {
+        flushSearchFilter()
         let ids = matchingSegmentIDs
         guard !ids.isEmpty else { activeMatchID = nil; return }
         if let cur = activeMatchID, let i = ids.firstIndex(of: cur) {
@@ -486,6 +523,7 @@ final class TranscriberModel: ObservableObject {
     /// Select every line matching the current search (replaces any selection) —
     /// e.g. filter to a phrase, select all, reassign the lot in one action.
     func selectAllMatches() {
+        flushSearchFilter()
         let ids = matchingSegmentIDs
         guard !ids.isEmpty else { return }
         selectedSegmentIDs = Set(ids)

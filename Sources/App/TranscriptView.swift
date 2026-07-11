@@ -258,6 +258,7 @@ struct TranscriptView: View {
                                 rowTracker: materializedRows)
                                 .equatable()
                                 .id(group.id)
+                                .transition(.identity)
                         }
                         Text(Disclaimer.long)
                             .font(.footnote)
@@ -355,7 +356,7 @@ struct TranscriptView: View {
             .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 6))
             .frame(minWidth: 170, maxWidth: 320)   // never collapses out of view
 
-            if model.isSearchActive {
+            if !model.searchText.isEmpty {
                 Picker("", selection: $model.searchMode) {
                     ForEach(TranscriberModel.SearchMode.allCases) { m in
                         Text(m.label).tag(m)
@@ -463,7 +464,7 @@ struct TranscriptView: View {
     }
 
     private var listState: ListState {
-        let q = model.searchText.trimmingCharacters(in: .whitespaces)
+        let q = model.appliedSearchText.trimmingCharacters(in: .whitespaces)
         return ListState(
             currentSegID: model.currentSegmentID,
             time: model.currentTime,
