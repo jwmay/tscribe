@@ -84,12 +84,34 @@ struct TscribeApp: App {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     weak var model: TranscriberModel?
     var pendingURL: URL?
+    private var spaceKeyMonitor: Any?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // The standard About panel reads applicationIconImage; the asset-catalog
         // app icon isn't loadable as a file, so set it explicitly here.
         if let icon = NSImage(named: "AppIconImage") {
             NSApplication.shared.applicationIconImage = icon
+        }
+        installSpaceKeyMonitor()
+    }
+
+    /// Spacebar toggles play/pause — but never while typing or in a sheet.
+    /// A key monitor (rather than a SwiftUI shortcut) so we can check who has
+    /// focus: space must still type spaces in the search field, edit mode, and
+    /// rename fields, and still activate focused controls in sheets.
+    private func installSpaceKeyMonitor() {
+        spaceKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard event.keyCode == 49,                                   // space
+                  !event.isARepeat,                                      // no auto-repeat toggling
+                  event.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty,
+                  let window = NSApp.keyWindow,
+                  !window.isSheet, window.attachedSheet == nil,          // sheets keep space for their controls
+                  !(window.firstResponder is NSText),                    // any text editing (field editors, TextEditor)
+                  let model = self?.model,
+                  model.stage == .ready, model.player != nil
+            else { return event }
+            model.togglePlayback()
+            return nil   // swallow: don't also scroll the transcript / beep
         }
     }
 

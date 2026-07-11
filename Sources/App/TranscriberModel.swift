@@ -367,6 +367,16 @@ final class TranscriberModel: ObservableObject {
                      toleranceBefore: .zero, toleranceAfter: .zero)
     }
 
+    /// Toggle play/pause (spacebar, and clicking the video picture).
+    func togglePlayback() {
+        guard let player else { return }
+        if player.timeControlStatus == .playing {
+            player.pause()
+        } else {
+            player.play()
+        }
+    }
+
     // MARK: Editing
 
     func binding(for segmentID: UUID) -> Binding<String> {

@@ -39,8 +39,9 @@ shows **when it actually happened**, and makes everything **findable** — still
   a result lands in that transcript with the query pre-loaded.
 - **Speaker labels in every export** — dialogue-style speaker names in TXT,
   SRT (`Name:`), VTT (`<v Name>`), RTF, DOCX, and PDF.
-- **Player polish** — click anywhere on the video to toggle play/pause
-  (QuickTime-style); clicking a word or timestamp now preserves the play/pause
+- **Player polish** — click anywhere on the video (or press **Space**) to
+  toggle play/pause, QuickTime-style; Space still types normally in search and
+  editing fields. Clicking a word or timestamp now preserves the play/pause
   state instead of force-starting playback.
 - Third-party attribution: `THIRD_PARTY_NOTICES.md` and a Credits panel in the
   About box (pyannote MIT, WeSpeaker CC-BY-4.0, sherpa-onnx Apache-2.0, ONNX
