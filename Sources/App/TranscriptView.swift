@@ -66,20 +66,12 @@ private struct MissingMediaView: View {
     }
 }
 
-/// Which segment rows the lazy list currently has built, tracked via row
-/// onAppear/onDisappear. A plain class held in @State: mutating it does NOT
-/// invalidate any view — it's bookkeeping for scroll decisions only.
-private final class MaterializedRows {
-    var ids: Set<UUID> = []
-}
-
 struct TranscriptView: View {
     @ObservedObject var model: TranscriberModel
     @State private var showSpeakerSheet = false
     @State private var showClockSheet = false
     @State private var pendingScrollHop: DispatchWorkItem?
     @State private var pendingFollowScroll: DispatchWorkItem?
-    @State private var materializedRows = MaterializedRows()
     @FocusState private var searchFocused: Bool
 
     var body: some View {
@@ -253,11 +245,9 @@ struct TranscriptView: View {
                                 contextMatchIDs: shared.contextHighlight
                                     ? Set(group.segments.filter { model.matchesSearch($0) }.map(\.id)) : [],
                                 searchToken: shared.searchToken,
-                                model: model,
-                                rowTracker: materializedRows)
+                                model: model)
                                 .equatable()
                                 .id(group.id)
-                                .transition(.identity)
                         }
                         Text(Disclaimer.long)
                             .font(.footnote)
@@ -431,12 +421,6 @@ struct TranscriptView: View {
     /// stale scrolls fighting over the viewport.
     private func scrollToSegment(_ id: UUID, proxy: ScrollViewProxy) {
         pendingScrollHop?.cancel()
-
-        if materializedRows.ids.contains(id) {
-            proxy.scrollTo(id, anchor: .center)
-            return
-        }
-
         let outer = model.turnGroups.first(where: { g in g.segments.contains(where: { $0.id == id }) })?.id ?? id
         proxy.scrollTo(outer, anchor: .center)
         guard outer != id else { return }
@@ -492,7 +476,6 @@ private struct TurnBlock: View, Equatable {
     let contextMatchIDs: Set<UUID>
     let searchToken: String?
     let model: TranscriberModel      // actions only — deliberately not @ObservedObject
-    let rowTracker: MaterializedRows // scroll bookkeeping — also not display state
 
     static func == (a: TurnBlock, b: TurnBlock) -> Bool {
         a.group == b.group
@@ -535,8 +518,6 @@ private struct TurnBlock: View, Equatable {
                            model: model)
                     .equatable()
                     .id(seg.id)
-                    .onAppear { rowTracker.ids.insert(seg.id) }
-                    .onDisappear { rowTracker.ids.remove(seg.id) }
             }
         }
     }
