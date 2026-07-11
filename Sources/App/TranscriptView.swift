@@ -89,13 +89,14 @@ struct TranscriptView: View {
                 .frame(minWidth: 320, idealWidth: 560)
                 .layoutPriority(1)   // extra window width goes to the video
 
-                // Opens at its minimum width, which is sized so the roster +
-                // search/filter controls are all usable without dragging.
+                // Opens at its minimum width, which is sized so the full search
+                // row (field, Filter/In-context, match nav, speaker picker,
+                // counter) fits even while a search is active.
                 transcriptPane
-                    .frame(minWidth: 560, idealWidth: 560)
+                    .frame(minWidth: 730, idealWidth: 730)
             }
         }
-        .frame(minWidth: 920, minHeight: 520)
+        .frame(minWidth: 1060, minHeight: 520)
         .sheet(isPresented: $showSpeakerSheet) {
             SpeakerCountSheet { count in model.identifySpeakers(numSpeakers: count) }
         }
