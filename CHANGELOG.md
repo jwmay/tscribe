@@ -47,6 +47,12 @@ shows **when it actually happened**, and makes everything **findable** — still
   Runtime MIT).
 
 ### Fixed
+- **Main-thread hangs during rapid transcript interaction** (fast ⌘-clicks,
+  search typing, playback): transcript rows are now value views compared by
+  equality — an update re-renders only the rows whose state changed instead
+  of re-laying-out the whole list — and the filtered/grouped transcript is
+  cached instead of being recomputed on every UI update (~1000× fewer
+  filter evaluations on long transcripts).
 - **Multi-track courtroom recordings** (FTR/JAVS-style, one track per
   microphone): audio extraction now mixes **all** audio tracks and
   peak-normalizes quiet recordings. Previously only the first (often nearly

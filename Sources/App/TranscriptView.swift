@@ -215,15 +215,38 @@ struct TranscriptView: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 10) {
-                        if turnGroups.isEmpty && model.isFiltering {
+                        if model.turnGroups.isEmpty && model.isFiltering {
                             Text("No matches\(model.searchText.isEmpty ? "" : " for “\(model.searchText)”").")
                                 .font(.callout)
                                 .foregroundStyle(.secondary)
                                 .padding(.top, 24)
                                 .frame(maxWidth: .infinity)
                         }
-                        ForEach(turnGroups) { group in
-                            TurnBlock(group: group, model: model)
+                        // Rows are plain value views compared by Equatable — a
+                        // playhead tick or ⌘-click re-renders only the turns
+                        // whose inputs changed, not the whole lazy list.
+                        let shared = listState
+                        ForEach(model.turnGroups) { group in
+                            let hasPlayhead = shared.currentSegID.map { id in
+                                group.segments.contains { $0.id == id }
+                            } ?? false
+                            TurnBlock(
+                                group: group,
+                                displayName: group.speaker.flatMap { model.transcript?.displayName(forSpeaker: $0) },
+                                clockOffset: shared.clockOffset,
+                                isEditing: shared.isEditing,
+                                activeSegmentID: hasPlayhead ? shared.currentSegID : nil,
+                                playhead: hasPlayhead ? shared.time : nil,
+                                activeMatchID: shared.activeMatchID.map { id in
+                                    group.segments.contains { $0.id == id } ? id : nil
+                                } ?? nil,
+                                selectedIDs: shared.selected.isEmpty
+                                    ? [] : shared.selected.intersection(group.segments.map(\.id)),
+                                contextMatchIDs: shared.contextHighlight
+                                    ? Set(group.segments.filter { model.matchesSearch($0) }.map(\.id)) : [],
+                                searchToken: shared.searchToken,
+                                model: model)
+                                .equatable()
                                 .id(group.id)
                         }
                         Text(Disclaimer.long)
@@ -381,7 +404,7 @@ struct TranscriptView: View {
     /// the lazy list and always resolves), then re-center on the exact segment
     /// once it exists.
     private func scrollToSegment(_ id: UUID, proxy: ScrollViewProxy) {
-        let outer = turnGroups.first(where: { g in g.segments.contains(where: { $0.id == id }) })?.id ?? id
+        let outer = model.turnGroups.first(where: { g in g.segments.contains(where: { $0.id == id }) })?.id ?? id
         withAnimation(.easeInOut(duration: 0.2)) { proxy.scrollTo(outer, anchor: .center) }
         if outer != id {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
@@ -390,43 +413,92 @@ struct TranscriptView: View {
         }
     }
 
-    /// Group consecutive segments that share a speaker into one dialogue turn.
-    /// Runs over the *filtered* segments, so search results keep their speaker
-    /// headers. When not diarized (speaker == nil), every segment is its own
-    /// group, which reproduces the original one-block-per-segment layout.
-    private var turnGroups: [TurnGroup] {
-        var groups: [TurnGroup] = []
-        for seg in model.visibleSegments {
-            if let last = groups.last, let spk = seg.speaker, last.speaker == spk {
-                groups[groups.count - 1].segments.append(seg)
-            } else {
-                groups.append(TurnGroup(id: seg.id, speaker: seg.speaker, segments: [seg]))
-            }
-        }
-        return groups
+    /// Everything the row views need from the model, gathered once per update
+    /// and handed down as plain values (rows do not observe the model).
+    private struct ListState {
+        var currentSegID: UUID?
+        var time: TimeInterval
+        var isEditing: Bool
+        var activeMatchID: UUID?
+        var selected: Set<UUID>
+        var searchToken: String?      // single-word query, for word highlighting
+        var contextHighlight: Bool    // context mode with an active query
+        var clockOffset: TimeInterval?
+    }
+
+    private var listState: ListState {
+        let q = model.searchText.trimmingCharacters(in: .whitespaces)
+        return ListState(
+            currentSegID: model.currentSegmentID,
+            time: model.currentTime,
+            isEditing: model.isEditing,
+            activeMatchID: model.activeMatchID,
+            selected: model.selectedSegmentIDs,
+            searchToken: (!q.isEmpty && !q.contains(" ")) ? q : nil,
+            contextHighlight: model.searchMode == .context && model.isSearchActive,
+            clockOffset: model.transcript?.clockOffset
+        )
     }
 }
 
-/// A dialogue turn: one or more consecutive segments from the same speaker.
-private struct TurnGroup: Identifiable {
-    let id: UUID           // first segment's id (stable anchor for scroll)
-    let speaker: String?
-    var segments: [Segment]
-    var start: TimeInterval { segments.first?.start ?? 0 }
-}
-
-private struct TurnBlock: View {
+/// One dialogue turn. A plain value view that does NOT observe the model: all
+/// display state arrives as Equatable inputs, so SwiftUI skips unchanged turns
+/// entirely. This is what keeps rapid interactions (10 Hz playhead ticks,
+/// ⌘-clicks, search stepping) from re-laying-out the whole lazy list — the
+/// cause of the main-thread hangs in LazyLayout placement.
+private struct TurnBlock: View, Equatable {
     let group: TurnGroup
-    @ObservedObject var model: TranscriberModel
+    let displayName: String?
+    let clockOffset: TimeInterval?
+    let isEditing: Bool
+    let activeSegmentID: UUID?
+    let playhead: TimeInterval?
+    let activeMatchID: UUID?
+    let selectedIDs: Set<UUID>
+    let contextMatchIDs: Set<UUID>
+    let searchToken: String?
+    let model: TranscriberModel      // actions only — deliberately not @ObservedObject
+
+    static func == (a: TurnBlock, b: TurnBlock) -> Bool {
+        a.group == b.group
+            && a.displayName == b.displayName
+            && a.clockOffset == b.clockOffset
+            && a.isEditing == b.isEditing
+            && a.activeSegmentID == b.activeSegmentID
+            && a.playhead == b.playhead
+            && a.activeMatchID == b.activeMatchID
+            && a.selectedIDs == b.selectedIDs
+            && a.contextMatchIDs == b.contextMatchIDs
+            && a.searchToken == b.searchToken
+    }
+
+    static func timecode(_ t: TimeInterval, offset: TimeInterval?) -> String {
+        offset.map { Timecode.wall(t + $0) } ?? Timecode.hms(t)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             if let key = group.speaker {
-                SpeakerHeader(key: key, start: group.start,
-                              turnSegmentIDs: group.segments.map(\.id), model: model)
+                SpeakerHeader(key: key,
+                              displayName: displayName ?? "Speaker \(key)",
+                              start: group.start,
+                              timecode: Self.timecode(group.start, offset: clockOffset),
+                              turnSegmentIDs: group.segments.map(\.id),
+                              model: model)
             }
             ForEach(group.segments) { seg in
-                SegmentRow(segment: seg, model: model, showTimestamp: group.speaker == nil)
+                SegmentRow(segment: seg,
+                           showTimestamp: group.speaker == nil,
+                           clockOffset: clockOffset,
+                           isEditing: isEditing,
+                           isActive: seg.id == activeSegmentID,
+                           playhead: seg.id == activeSegmentID ? playhead : nil,
+                           isSelected: selectedIDs.contains(seg.id),
+                           isActiveMatch: seg.id == activeMatchID,
+                           isContextMatch: contextMatchIDs.contains(seg.id),
+                           searchToken: searchToken,
+                           model: model)
+                    .equatable()
                     .id(seg.id)
             }
         }
@@ -469,18 +541,27 @@ private struct SpeakerAssignMenu: View {
 
 /// The clickable, renamable speaker label above a dialogue turn.
 /// Right-click reassigns the whole turn to a different speaker.
-private struct SpeakerHeader: View {
+/// Value view (not observing) — display state comes in as plain inputs.
+private struct SpeakerHeader: View, Equatable {
     let key: String
+    let displayName: String
     let start: TimeInterval
+    let timecode: String
     let turnSegmentIDs: [UUID]
-    @ObservedObject var model: TranscriberModel
+    let model: TranscriberModel      // actions only — not observed
     @State private var renaming = false
+
+    static func == (a: SpeakerHeader, b: SpeakerHeader) -> Bool {
+        a.key == b.key && a.displayName == b.displayName
+            && a.start == b.start && a.timecode == b.timecode
+            && a.turnSegmentIDs == b.turnSegmentIDs
+    }
 
     var body: some View {
         HStack(spacing: 8) {
             Circle().fill(SpeakerPalette.color(for: key)).frame(width: 10, height: 10)
             Button { renaming = true } label: {
-                Text(model.transcript?.displayName(forSpeaker: key) ?? "Speaker \(key)")
+                Text(displayName)
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(SpeakerPalette.color(for: key))
             }
@@ -497,7 +578,7 @@ private struct SpeakerHeader: View {
                 .padding(12)
             }
             Button { model.seek(to: start) } label: {
-                Text(model.displayTimecode(start)).font(.caption.monospacedDigit())
+                Text(timecode).font(.caption.monospacedDigit())
             }
             .buttonStyle(.plain)
             .foregroundStyle(.secondary)
@@ -555,33 +636,53 @@ private struct DiarizingOverlay: View {
     }
 }
 
-private struct SegmentRow: View {
+/// One transcript line. Value view (not observing the model): everything that
+/// affects rendering is an Equatable input, so unchanged rows are skipped.
+private struct SegmentRow: View, Equatable {
     let segment: Segment
-    @ObservedObject var model: TranscriberModel
-    var showTimestamp: Bool = true
+    let showTimestamp: Bool
+    let clockOffset: TimeInterval?
+    let isEditing: Bool
+    let isActive: Bool
+    let playhead: TimeInterval?      // non-nil only when this row is under the playhead
+    let isSelected: Bool
+    let isActiveMatch: Bool
+    let isContextMatch: Bool
+    let searchToken: String?
+    let model: TranscriberModel      // actions only — not observed
 
-    private var isActive: Bool { model.currentSegmentID == segment.id }
+    static func == (a: SegmentRow, b: SegmentRow) -> Bool {
+        a.segment == b.segment
+            && a.showTimestamp == b.showTimestamp
+            && a.clockOffset == b.clockOffset
+            && a.isEditing == b.isEditing
+            && a.isActive == b.isActive
+            && a.playhead == b.playhead
+            && a.isSelected == b.isSelected
+            && a.isActiveMatch == b.isActiveMatch
+            && a.isContextMatch == b.isContextMatch
+            && a.searchToken == b.searchToken
+    }
 
     /// Highlight words containing a single-word search query (phrase queries
     /// span chips, so those highlight at the segment level via filtering only).
     private func isSearchMatch(_ word: Word) -> Bool {
-        let q = model.searchText.trimmingCharacters(in: .whitespaces)
-        guard !q.isEmpty, !q.contains(" ") else { return false }
-        return word.text.localizedCaseInsensitiveContains(q)
+        guard let token = searchToken else { return false }
+        return word.text.localizedCaseInsensitiveContains(token)
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             if showTimestamp {
                 Button { model.seek(to: segment.start) } label: {
-                    Text(model.displayTimecode(segment.start))
+                    Text(TurnBlock.timecode(segment.start, offset: clockOffset))
                         .font(.caption.monospacedDigit())
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(.secondary)
             }
 
-            if model.isEditing {
+            if isEditing {
                 TextEditor(text: model.binding(for: segment.id))
                     .font(.body)
                     .frame(minHeight: 46)
@@ -593,7 +694,7 @@ private struct SegmentRow: View {
                 FlowLayout(spacing: 4, lineSpacing: 6) {
                     ForEach(segment.words) { word in
                         WordChip(word: word,
-                                 isCurrent: model.currentTime >= word.start && model.currentTime < word.end,
+                                 isCurrent: playhead.map { $0 >= word.start && $0 < word.end } ?? false,
                                  isMatch: isSearchMatch(word))
                             .onTapGesture { model.seek(to: word.start) }
                     }
@@ -616,6 +717,8 @@ private struct SegmentRow: View {
             .onEnded { model.toggleSelection(segment.id) })
         .contextMenu {
             // Right-clicking a selected line acts on the whole selection.
+            // (Menu content is only built when the menu opens, so reading the
+            // live model here costs nothing during normal rendering.)
             if isSelected && model.selectedSegmentIDs.count > 1 {
                 SpeakerAssignMenu(model: model,
                                   title: "Assign \(model.selectedSegmentIDs.count) Lines to Speaker",
@@ -627,15 +730,13 @@ private struct SegmentRow: View {
         }
     }
 
-    private var isSelected: Bool { model.selectedSegmentIDs.contains(segment.id) }
-
     /// Selection wins; then playhead; then the stepped-to search match; then a
     /// faint wash on matching rows in context mode.
     private var rowBackground: Color {
         if isSelected { return Color.accentColor.opacity(0.16) }
         if isActive { return Color.accentColor.opacity(0.10) }
-        if model.activeMatchID == segment.id { return Color.yellow.opacity(0.22) }
-        if model.searchMode == .context && model.matchesSearch(segment) { return Color.yellow.opacity(0.07) }
+        if isActiveMatch { return Color.yellow.opacity(0.22) }
+        if isContextMatch { return Color.yellow.opacity(0.07) }
         return .clear
     }
 }
@@ -645,14 +746,23 @@ private struct WordChip: View {
     let isCurrent: Bool
     var isMatch: Bool = false
 
-    var body: some View {
+    @ViewBuilder var body: some View {
+        // Tooltips install tracking areas — only attach one where it's needed,
+        // not on every one of thousands of chips.
+        if word.confidence < 0.7 {
+            base.help("Low confidence (\(Int(word.confidence * 100))%) — verify against the audio")
+        } else {
+            base
+        }
+    }
+
+    private var base: some View {
         Text(word.text)
             .foregroundColor(color)
             .underline(word.confidence < 0.5, color: .red)
             .padding(.horizontal, 2)
             .background(chipBackground, in: RoundedRectangle(cornerRadius: 4))
             .contentShape(Rectangle())
-            .help(word.confidence < 0.7 ? "Low confidence (\(Int(word.confidence * 100))%) — verify against the audio" : "")
     }
 
     private var chipBackground: Color {

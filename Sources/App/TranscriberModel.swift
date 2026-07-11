@@ -6,6 +6,14 @@ import UniformTypeIdentifiers
 
 enum ExportFormat { case docx, pdf, txt, txtTimestamped, srt, vtt, rtf }
 
+/// A dialogue turn: one or more consecutive visible segments from the same speaker.
+struct TurnGroup: Identifiable, Equatable {
+    let id: UUID           // first segment's id (stable scroll anchor)
+    let speaker: String?
+    var segments: [Segment]
+    var start: TimeInterval { segments.first?.start ?? 0 }
+}
+
 /// Drives the whole flow: import → extract → transcribe → review/edit/export,
 /// plus auto-save and reopening saved transcripts.
 @MainActor
@@ -21,7 +29,7 @@ final class TranscriberModel: ObservableObject {
 
     @Published var stage: Stage = .idle
     @Published var mediaURL: URL?
-    @Published var transcript: Transcript?
+    @Published var transcript: Transcript? { didSet { invalidateDerived() } }
     @Published var currentTime: TimeInterval = 0
     @Published var isEditing = false
     @Published private(set) var player: AVPlayer?
@@ -42,29 +50,74 @@ final class TranscriberModel: ObservableObject {
         var label: String { self == .filter ? "Filter" : "In context" }
     }
 
-    @Published var searchText = "" { didSet { if oldValue != searchText { activeMatchID = nil } } }
-    @Published var speakerFilter: String? = nil { didSet { if oldValue != speakerFilter { activeMatchID = nil } } }
-    @Published var searchMode: SearchMode = .filter { didSet { if oldValue != searchMode { activeMatchID = nil } } }
+    @Published var searchText = "" { didSet { if oldValue != searchText { activeMatchID = nil; invalidateDerived() } } }
+    @Published var speakerFilter: String? = nil { didSet { if oldValue != speakerFilter { activeMatchID = nil; invalidateDerived() } } }
+    @Published var searchMode: SearchMode = .filter { didSet { if oldValue != searchMode { activeMatchID = nil; invalidateDerived() } } }
     /// The match currently stepped-to in context mode (strong highlight + scroll target).
     @Published var activeMatchID: UUID? = nil
 
     /// True when a text query is in effect.
     var isSearchActive: Bool { !searchText.trimmingCharacters(in: .whitespaces).isEmpty }
 
+    // MARK: Derived view state (cached)
+    //
+    // `visibleSegments` / `matchingSegmentIDs` / `turnGroups` are read many
+    // times per SwiftUI update. Recomputing the O(n) text filtering on every
+    // body evaluation caused main-thread hangs on long transcripts during
+    // rapid interaction — so they're recomputed at most once per change to
+    // the transcript, search text, speaker filter, or search mode.
+
+    private var derivedDirty = true
+    private var cachedVisible: [Segment] = []
+    private var cachedMatchIDs: [UUID] = []
+    private var cachedGroups: [TurnGroup] = []
+
+    private func invalidateDerived() { derivedDirty = true }
+
+    private func refreshDerivedIfNeeded() {
+        guard derivedDirty else { return }
+        derivedDirty = false
+        guard let t = transcript else {
+            cachedVisible = []; cachedMatchIDs = []; cachedGroups = []
+            return
+        }
+        switch searchMode {
+        case .filter:  cachedVisible = t.filteredSegments(query: searchText, speaker: speakerFilter)
+        case .context: cachedVisible = t.filteredSegments(query: "", speaker: speakerFilter)
+        }
+        cachedMatchIDs = isSearchActive
+            ? t.filteredSegments(query: searchText, speaker: speakerFilter).map(\.id)
+            : []
+        // Group consecutive same-speaker segments into dialogue turns. When not
+        // diarized (speaker == nil), every segment is its own group.
+        var groups: [TurnGroup] = []
+        for seg in cachedVisible {
+            if let spk = seg.speaker, groups.last?.speaker == spk {
+                groups[groups.count - 1].segments.append(seg)
+            } else {
+                groups.append(TurnGroup(id: seg.id, speaker: seg.speaker, segments: [seg]))
+            }
+        }
+        cachedGroups = groups
+    }
+
     /// Segments currently visible in the transcript pane. Context mode keeps all
     /// rows (so matches are seen in context); the speaker filter narrows in both modes.
     var visibleSegments: [Segment] {
-        guard let t = transcript else { return [] }
-        switch searchMode {
-        case .filter:  return t.filteredSegments(query: searchText, speaker: speakerFilter)
-        case .context: return t.filteredSegments(query: "", speaker: speakerFilter)
-        }
+        refreshDerivedIfNeeded()
+        return cachedVisible
     }
 
     /// IDs of segments matching the current query (+ speaker filter), in transcript order.
     var matchingSegmentIDs: [UUID] {
-        guard let t = transcript, isSearchActive else { return [] }
-        return t.filteredSegments(query: searchText, speaker: speakerFilter).map(\.id)
+        refreshDerivedIfNeeded()
+        return cachedMatchIDs
+    }
+
+    /// The visible segments grouped into dialogue turns.
+    var turnGroups: [TurnGroup] {
+        refreshDerivedIfNeeded()
+        return cachedGroups
     }
 
     /// O(1) per-row match test (used for context-mode row highlighting).
