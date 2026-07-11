@@ -1,6 +1,6 @@
 name: Release (Standard)
 
-# Builds the Standard edition DMG (a few MB — fits GitHub's 2 GiB asset limit) and,
+# Builds the Standard edition DMG (~40 MB — fits GitHub's 2 GiB asset limit) and,
 # on a version tag, attaches it to the GitHub Release. The Complete edition DMG
 # (~2.7 GB) exceeds GitHub's limit and is still released manually from a dev Mac
 # via scripts/package-complete.sh.
@@ -9,6 +9,11 @@ name: Release (Standard)
 # signed (codesign --sign -), exactly as local packaging does. The small engine
 # artifacts (whisper-cli + Silero VAD) are committed under engine/, so the runner
 # needs no whisper.cpp checkout; the large-v3 model is downloaded at first launch.
+#
+# The speaker-diarization engine (~56 MB: sherpa-onnx CLI + 2 ONNX models) is NOT
+# committed — it's fetched/built by scripts/fetch-diarization-engine.sh, cached
+# between runs, and hard-verified below so a release can never silently ship
+# without the "Identify Speakers" feature.
 
 on:
   push:
@@ -37,6 +42,34 @@ jobs:
           xcodebuild -version
           swift --version
 
+      # The sherpa-onnx build takes ~10 min; cache the finished artifacts so later
+      # releases skip it. Keyed on the fetch script, so changing model URLs or build
+      # flags invalidates the cache.
+      - name: Restore diarization engine cache
+        id: diar-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            engine/sherpa-onnx-offline-speaker-diarization
+            engine/diarize-segmentation.onnx
+            engine/diarize-embedding.onnx
+          key: diarization-engine-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/fetch-diarization-engine.sh') }}
+
+      - name: Fetch diarization engine (models + sherpa-onnx CLI)
+        if: steps.diar-cache.outputs.cache-hit != 'true'
+        run: scripts/fetch-diarization-engine.sh
+
+      # package.sh gracefully skips missing diarization artifacts (right for local
+      # dev), but a published release must include the feature — fail loudly here.
+      - name: Verify diarization engine present
+        run: |
+          for f in engine/sherpa-onnx-offline-speaker-diarization \
+                   engine/diarize-segmentation.onnx \
+                   engine/diarize-embedding.onnx; do
+            [ -s "$f" ] || { echo "MISSING: $f — refusing to release without the speaker feature"; exit 1; }
+          done
+          chmod +x engine/sherpa-onnx-offline-speaker-diarization
+
       - name: Package Standard DMG
         run: scripts/package-standard.sh
 
@@ -58,5 +91,5 @@ jobs:
           else
             gh release create "$TAG" dist/Tscribe.dmg \
               --title "Tscribe $TAG" \
-              --notes "Tscribe — a small download that fetches its speech model (~2.9 GB) once on first launch, then runs fully offline. Your recordings and transcripts never leave your Mac. A Complete edition (model bundled, ~2.7 GB, no first-launch download) is distributed separately."
+              --notes "Tscribe — a small download that fetches its speech model (~2.9 GB) once on first launch, then runs fully offline. Transcription and speaker identification both run entirely on your Mac; your recordings and transcripts never leave it. A Complete edition (model bundled, ~2.7 GB, no first-launch download) is distributed separately."
           fi

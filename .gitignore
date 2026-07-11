@@ -22,6 +22,12 @@ Vendor/
 !engine/whisper-cli
 !engine/ggml-silero-v5.1.2.bin
 
+# Speaker-diarization engine (~56 MB) — fetched/built, not committed (like the big
+# whisper model). Run scripts/fetch-diarization-engine.sh to obtain these.
+engine/sherpa-onnx-offline-speaker-diarization
+engine/diarize-segmentation.onnx
+engine/diarize-embedding.onnx
+
 # Machine-local Claude Code permissions (the shared commands/ + CLAUDE.md are committed)
 .claude/settings.local.json
 

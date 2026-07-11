@@ -56,4 +56,48 @@ enum TranscriptStore {
             .prefix(limit)
             .map { $0 }
     }
+
+    // MARK: Library-wide search
+
+    /// One saved transcript containing matches for a library search.
+    struct LibraryHit: Identifiable, Equatable {
+        let id = UUID()
+        let url: URL
+        let name: String
+        let date: Date
+        let matchCount: Int
+        /// First few matching lines, pre-formatted as "timecode — text".
+        let snippets: [String]
+
+        static func == (a: LibraryHit, b: LibraryHit) -> Bool {
+            a.url == b.url && a.matchCount == b.matchCount
+        }
+    }
+
+    /// Search every saved transcript for a text query. `urls` overrides the file
+    /// list (for tests); by default the whole library is scanned. Unreadable
+    /// files are skipped. Hits are sorted by match count, most first.
+    static func searchLibrary(query: String,
+                              in urls: [URL]? = nil,
+                              snippetLimit: Int = 2) -> [LibraryHit] {
+        let q = query.trimmingCharacters(in: .whitespaces)
+        guard !q.isEmpty else { return [] }
+        let files = urls ?? recents(limit: Int.max).map(\.url)
+
+        var hits: [LibraryHit] = []
+        for url in files {
+            guard let doc = try? load(from: url) else { continue }
+            let matches = doc.transcript.filteredSegments(query: q, speaker: nil)
+            guard !matches.isEmpty else { continue }
+            let snippets = matches.prefix(snippetLimit).map { seg in
+                "\(doc.transcript.timecode(seg.start)) — \(seg.text.count > 90 ? String(seg.text.prefix(90)) + "…" : seg.text)"
+            }
+            hits.append(LibraryHit(url: url,
+                                   name: url.deletingPathExtension().lastPathComponent,
+                                   date: doc.createdAt,
+                                   matchCount: matches.count,
+                                   snippets: Array(snippets)))
+        }
+        return hits.sorted { $0.matchCount > $1.matchCount }
+    }
 }

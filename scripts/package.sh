@@ -7,8 +7,9 @@ set -euo pipefail
 #
 # Usage: package.sh [--edition standard|complete]
 #
-#   standard  (default)  Bundles whisper-cli + Silero VAD only (a few-MB DMG). The
-#                        2.9 GB large-v3 model is downloaded once on first launch.
+#   standard  (default)  Bundles whisper-cli + Silero VAD + (when vendored) the small
+#                        speaker-diarization engine (~50-MB DMG). The 2.9 GB large-v3
+#                        model is downloaded once on first launch.
 #                        Built with the DOWNLOAD_MODEL flag (ReleaseStandard config)
 #                        so the downloader + onboarding are compiled in. The primary
 #                        distribution → Tscribe.dmg.
@@ -39,6 +40,12 @@ APP_NAME="Tscribe"
 CLI="$ENGINE_DIR/whisper-cli"
 VAD="$ENGINE_DIR/ggml-silero-v5.1.2.bin"
 MODEL="$WHISPER_DIR/models/ggml-large-v3.bin"
+
+# Speaker diarization (optional, small, no network) — bundled in BOTH editions when
+# vendored. Absence just hides the "Identify Speakers" feature at runtime.
+DIAR_CLI="$ENGINE_DIR/sherpa-onnx-offline-speaker-diarization"
+DIAR_SEG="$ENGINE_DIR/diarize-segmentation.onnx"
+DIAR_EMB="$ENGINE_DIR/diarize-embedding.onnx"
 
 if [ "$EDITION" = "complete" ]; then
   CONFIG="Release"
@@ -95,12 +102,31 @@ mkdir -p "$RES"
 cp "$CLI" "$RES/whisper-cli"
 cp "$VAD" "$RES/ggml-silero-v5.1.2.bin"
 chmod +x "$RES/whisper-cli"
+
+# Speaker diarization: bundle in both editions when the artifacts are present.
+DIAR_BUNDLED=0
+if [ -f "$DIAR_CLI" ] && [ -f "$DIAR_SEG" ] && [ -f "$DIAR_EMB" ]; then
+  echo "    + bundling speaker diarization (sherpa-onnx CLI + 2 ONNX models)"
+  cp "$DIAR_CLI" "$RES/sherpa-onnx-offline-speaker-diarization"
+  cp "$DIAR_SEG" "$RES/diarize-segmentation.onnx"
+  cp "$DIAR_EMB" "$RES/diarize-embedding.onnx"
+  chmod +x "$RES/sherpa-onnx-offline-speaker-diarization"
+  DIAR_BUNDLED=1
+else
+  echo "    note: speaker-diarization artifacts not in engine/ — 'Identify Speakers' will be hidden"
+fi
+
 if [ "$EDITION" = "complete" ]; then
   echo "    + bundling large-v3 model (2.9 GB)"
   cp "$MODEL" "$RES/ggml-large-v3.bin"
 else
   echo "    (skipping large-v3 model — downloaded on first launch)"
 fi
+
+# Credits.html is auto-loaded by the standard macOS About panel (third-party
+# attribution incl. the CC-BY-4.0 speaker-embedding model).
+CREDITS="$PROJECT_DIR/assets/Credits.html"
+[ -f "$CREDITS" ] && cp "$CREDITS" "$RES/Credits.html"
 
 # Complete offline-audit: the "no network at all" claim should be auditable — the
 # Hugging Face URL only exists behind #if DOWNLOAD_MODEL, so it must be absent here.
@@ -113,13 +139,23 @@ if [ "$EDITION" = "complete" ]; then
   echo "   OK: no download URL present"
 fi
 
-echo "==> Ad-hoc signing (inner binary first, then the app)"
+echo "==> Ad-hoc signing (inner binaries first, then the app)"
 codesign --force --sign - --timestamp=none "$RES/whisper-cli"
+if [ "$DIAR_BUNDLED" = 1 ]; then
+  codesign --force --sign - --timestamp=none "$RES/sherpa-onnx-offline-speaker-diarization"
+fi
 codesign --force --sign - --timestamp=none "$APP"
 codesign --verify --verbose=2 "$APP" || echo "   (verify note above is expected for ad-hoc)"
 
 echo "==> Sanity: bundled whisper-cli runs from its bundled location"
 "$RES/whisper-cli" --help >/dev/null 2>&1 && echo "   OK: bundled whisper-cli executes"
+if [ "$DIAR_BUNDLED" = 1 ]; then
+  if "$RES/sherpa-onnx-offline-speaker-diarization" --help >/dev/null 2>&1; then
+    echo "   OK: bundled diarizer executes"
+  else
+    echo "   note: diarizer --help returned nonzero (some builds print usage to stderr)"
+  fi
+fi
 
 echo "==> Creating styled .dmg"
 mkdir -p "$DIST_DIR"

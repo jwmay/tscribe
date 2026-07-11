@@ -80,6 +80,52 @@ onboarding code doesn't exist and the `.onboarding` stage is never reached.
 - To change the model: update `ModelSpec` (use `/update-model-spec`) and re-run `/release-standard`; the
   drift-guard fails the build if the pin and the canonical local model disagree.
 
+## Speaker diarization ("Identify Speakers")
+
+Whisper can't tell speakers apart, so a **second local engine** runs alongside it:
+**sherpa-onnx** (Apache-2.0) offline diarization, invoked as a bundled CLI exactly like
+`whisper-cli`. It uses **pyannote segmentation-3.0** (MIT) + a **WeSpeaker VoxCeleb**
+embedding model (CC-BY-4.0). 100% offline, no Python — bundled in **both** editions
+(small), so it never touches the download/onboarding path and the Complete offline-audit
+still passes (no Hugging Face URL enters the Swift binary).
+
+- **On-demand**, not part of every transcription: the "Identify Speakers" toolbar button
+  re-extracts the audio from the retained media reference, runs the diarizer, and merges.
+  Asks for the speaker count first (fixing it is the biggest accuracy lever) with an
+  auto-detect option. Rendered as a **dialogue view** (grouped speaker turns); speakers are
+  renamable (roster strip + click a turn header), and names flow into all 7 exports.
+- Diarization is **assistive, not authoritative** (good on clean ≤2-speaker audio, rough on
+  crosstalk/many speakers) — presented as human-correctable, per the evidentiary use case.
+
+**Key files:** `Sources/Core/DiarizationService.swift` (shells out to the CLI, parses
+`start -- end speaker_NN`), `Sources/Core/SpeakerMerge.swift` (pure whisperX-style overlap
+merge + sentence realignment + segment splitting — unit-testable), `Sources/App/SpeakerCountSheet.swift`,
+plus `Segment.speaker` / `Transcript.speakers` in `Models.swift` (doc `version` → 2,
+back-compat: old files decode with no speakers), the `diarizeCLI`/`segmentationModel`/`embeddingModel`
+resolvers in `EngineLocator.swift`, and the dialogue/roster UI in `TranscriptView.swift`.
+
+**Engine artifacts (~56 MB) are fetched/built, not committed** (like the 2.9 GB model):
+run `scripts/fetch-diarization-engine.sh` to download the two ONNX models + build the sherpa
+CLI into `engine/` (gitignored). `package.sh` bundles + signs them in both editions **when
+present**, and gracefully hides the feature when absent. The release workflow fetches them
+itself (cached between runs, keyed on the fetch script) and **hard-fails** if they're missing,
+so a GitHub release can never silently ship without the feature. Attribution lives in
+`THIRD_PARTY_NOTICES.md` + the bundled `assets/Credits.html` (About panel).
+
+## Actual Time (burned-in clock sync)
+
+Evidentiary videos usually carry a burned-in wall-clock; transcripts must show **that** time,
+not media-relative time. The "Actual Time" toolbar button opens `ClockSyncSheet`: it grabs the
+frame at the current playback position, OCRs its clock via **Vision** (Apple framework, fully
+on-device — offline-audit-safe), pre-fills the time for the user to confirm/correct, and stores
+`offset = wallTime − mediaTime` as `Transcript.clockOffset` (doc `version` → 3, tolerant decode).
+Segment/word times stay **media-relative** (playback/seek unaffected); the offset applies only at
+display (`TranscriberModel.displayTimecode`) and in the document exports (TXT/RTF/DOCX/PDF via
+`Transcript.timecode`, with 24 h wraparound). **SRT/VTT cue timings deliberately stay
+media-relative** — wall-clock cues would break subtitle playback. Key files:
+`Sources/Core/ClockOCR.swift` (frame + OCR + `parseTime`), `Sources/App/ClockSyncSheet.swift`.
+The `test-media/icty-courtroom-3speakers.mp4` clip has a synthetic 10:47:30 clock for testing.
+
 ## Common tasks (slash commands in `.claude/commands/`)
 
 - `/build` — `xcodegen generate` + a Debug build (uses the `~/Developer/whisper.cpp` fallback).
@@ -112,6 +158,12 @@ Both editions share the version. Bump the two values in `project.yml`
 the Standard CI release). No checked-in Info.plist (`GENERATE_INFOPLIST_FILE: YES`).
 
 ## Gotchas
+
+- **Courtroom recorders (FTR/JAVS…) write one audio track per microphone**, and the first
+  is often nearly silent. `AudioExtractor` therefore mixes **all** audio tracks
+  (`AVAssetReaderAudioMixOutput`) and **peak-normalizes** quiet audio (+30 dB cap). Reading
+  only `.first` track caused compressed timestamps ("transcript ahead of video") and Whisper
+  repetition loops — especially with `--vad`, which fragments/discards too-quiet audio.
 
 - **SwiftUI `VideoPlayer` SIGABRTs on macOS 26** in `_AVKit_SwiftUI` — use the `AVPlayerView`
   `NSViewRepresentable` (`PlayerView` in `TranscriptView.swift`) instead.

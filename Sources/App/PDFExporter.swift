@@ -62,9 +62,21 @@ enum PDFExporter {
 
         let tsFont = NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .semibold)
         let bodyFont = NSFont.systemFont(ofSize: 11)
+        let speakerFont = NSFont.boldSystemFont(ofSize: 11)
+        let speakerStyle = NSMutableParagraphStyle()
+        speakerStyle.paragraphSpacingBefore = 8
+        speakerStyle.paragraphSpacing = 2
 
+        var last: String? = nil
         for seg in transcript.segments {
-            out.append(NSAttributedString(string: Timecode.hms(seg.start) + "\t", attributes: [
+            // Bold speaker heading whenever the speaker changes (diarized only).
+            if let name = transcript.displayName(forSpeaker: seg.speaker), seg.speaker != last {
+                out.append(NSAttributedString(string: name + "\n", attributes: [
+                    .font: speakerFont, .foregroundColor: NSColor.black, .paragraphStyle: speakerStyle
+                ]))
+            }
+            last = seg.speaker
+            out.append(NSAttributedString(string: transcript.timecode(seg.start) + "\t", attributes: [
                 .font: tsFont, .foregroundColor: NSColor.darkGray, .paragraphStyle: bodyStyle
             ]))
             out.append(NSAttributedString(string: seg.text + "\n", attributes: [

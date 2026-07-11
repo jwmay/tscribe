@@ -6,6 +6,11 @@ struct DropView: View {
     @ObservedObject var model: TranscriberModel
     @State private var targeted = false
 
+    // Library-wide search across all saved transcripts.
+    @State private var libraryQuery = ""
+    @State private var libraryHits: [TranscriptStore.LibraryHit] = []
+    @State private var librarySearchTask: Task<Void, Never>?
+
     var body: some View {
         ScrollView {
             VStack(spacing: 18) {
@@ -76,7 +81,7 @@ struct DropView: View {
                 }
 
                 if !model.recents.isEmpty {
-                    recentsSection
+                    librarySection
                 }
             }
             .padding(40)
@@ -86,42 +91,126 @@ struct DropView: View {
         .onAppear { model.refreshRecents() }
     }
 
-    private var recentsSection: some View {
+    /// Recents list, with a search field that scans *all* saved transcripts.
+    /// Typing swaps the list for per-file results; opening a result carries the
+    /// query into the transcript's search field.
+    private var librarySection: some View {
         VStack(alignment: .leading, spacing: 8) {
             Divider().padding(.vertical, 6)
 
             HStack {
-                Text("Recent transcripts").font(.headline)
+                Text(searching ? "Search results" : "Recent transcripts").font(.headline)
                 Spacer()
                 Button("Open…") { openSaved() }
                     .controlSize(.small)
             }
 
-            ForEach(model.recents.prefix(8)) { item in
-                Button { model.openDocument(item.url) } label: {
-                    HStack(spacing: 10) {
-                        Image(systemName: "doc.text.fill")
-                            .foregroundStyle(.secondary)
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(item.name).lineLimit(1)
-                            Text(item.date, format: .dateTime.month().day().year().hour().minute())
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                        Image(systemName: "chevron.right")
-                            .font(.caption)
-                            .foregroundStyle(.tertiary)
+            HStack(spacing: 5) {
+                Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                TextField("Search all transcripts", text: $libraryQuery)
+                    .textFieldStyle(.plain)
+                    .onExitCommand { libraryQuery = "" }
+                if !libraryQuery.isEmpty {
+                    Button { libraryQuery = "" } label: {
+                        Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
                     }
-                    .padding(8)
-                    .contentShape(Rectangle())
+                    .buttonStyle(.plain)
                 }
-                .buttonStyle(.plain)
-                .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 6))
+            .onChange(of: libraryQuery) { _, q in searchLibrary(q) }
+
+            if searching {
+                if libraryHits.isEmpty {
+                    Text("No transcripts mention “\(libraryQuery)”.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .padding(.vertical, 8)
+                } else {
+                    ForEach(libraryHits) { hit in
+                        Button {
+                            let query = libraryQuery
+                            model.openDocument(hit.url)
+                            model.searchText = query   // land in the transcript pre-filtered
+                        } label: {
+                            HStack(alignment: .top, spacing: 10) {
+                                Image(systemName: "text.magnifyingglass")
+                                    .foregroundStyle(.secondary)
+                                    .padding(.top, 2)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    HStack {
+                                        Text(hit.name).lineLimit(1)
+                                        Text("\(hit.matchCount) match\(hit.matchCount == 1 ? "" : "es")")
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    ForEach(hit.snippets, id: \.self) { s in
+                                        Text(s)
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                            .lineLimit(1)
+                                    }
+                                }
+                                Spacer()
+                                Image(systemName: "chevron.right")
+                                    .font(.caption)
+                                    .foregroundStyle(.tertiary)
+                            }
+                            .padding(8)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
+                    }
+                }
+            } else {
+                ForEach(model.recents.prefix(8)) { item in
+                    Button { model.openDocument(item.url) } label: {
+                        HStack(spacing: 10) {
+                            Image(systemName: "doc.text.fill")
+                                .foregroundStyle(.secondary)
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(item.name).lineLimit(1)
+                                Text(item.date, format: .dateTime.month().day().year().hour().minute())
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .font(.caption)
+                                .foregroundStyle(.tertiary)
+                        }
+                        .padding(8)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
+                }
             }
         }
         .frame(maxWidth: 470)
         .padding(.top, 4)
+    }
+
+    private var searching: Bool {
+        !libraryQuery.trimmingCharacters(in: .whitespaces).isEmpty
+    }
+
+    /// Debounced, off-main scan of every saved transcript.
+    private func searchLibrary(_ query: String) {
+        librarySearchTask?.cancel()
+        let q = query.trimmingCharacters(in: .whitespaces)
+        guard !q.isEmpty else { libraryHits = []; return }
+        librarySearchTask = Task {
+            try? await Task.sleep(nanoseconds: 250_000_000)   // debounce typing
+            guard !Task.isCancelled else { return }
+            let hits = await Task.detached(priority: .userInitiated) {
+                TranscriptStore.searchLibrary(query: q)
+            }.value
+            if !Task.isCancelled { libraryHits = hits }
+        }
     }
 
     private func choose() {
