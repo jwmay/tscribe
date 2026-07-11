@@ -18,13 +18,21 @@ enum AudioExtractionError: LocalizedError {
 
 /// Extracts a 16 kHz mono 16-bit PCM WAV from any AVFoundation-readable
 /// video/audio file (mp4, mov, m4a, wav, aac, ...). Fully local — no ffmpeg.
+///
+/// Reads **all** audio tracks mixed together, not just the first: courtroom /
+/// hearing recorders (FTR, JAVS, …) write one track per microphone, and the
+/// first is often a nearly-silent feed — transcribing only that one produced
+/// hallucination loops. The mixed signal is then peak-normalized, because
+/// courtroom mics are typically recorded very quiet and Whisper degrades
+/// badly on low-level audio.
 enum AudioExtractor {
     static let sampleRate = 16_000
 
     static func extractWAV(from url: URL, to outURL: URL) async throws {
         let asset = AVURLAsset(url: url)
 
-        guard let track = try await asset.loadTracks(withMediaType: .audio).first else {
+        let tracks = try await asset.loadTracks(withMediaType: .audio)
+        guard !tracks.isEmpty else {
             throw AudioExtractionError.noAudioTrack
         }
 
@@ -45,7 +53,8 @@ enum AudioExtractor {
             AVLinearPCMIsNonInterleaved: false
         ]
 
-        let output = AVAssetReaderTrackOutput(track: track, outputSettings: settings)
+        // Mixes every audio track into one mono stream (a single track passes through).
+        let output = AVAssetReaderAudioMixOutput(audioTracks: tracks, audioSettings: settings)
         output.alwaysCopiesSampleData = false
         guard reader.canAdd(output) else {
             throw AudioExtractionError.readFailed("cannot attach PCM output")
@@ -77,8 +86,33 @@ enum AudioExtractor {
             throw AudioExtractionError.readFailed(reader.error?.localizedDescription ?? "unknown")
         }
 
+        normalizePeak(&pcm)
+
         try wavData(fromPCM: pcm, sampleRate: sampleRate, channels: 1, bitsPerSample: 16)
             .write(to: outURL)
+    }
+
+    /// Boost quiet audio so its peak sits near full scale (~-1 dB). Gain is
+    /// capped at 30 dB so a silent recording doesn't become pure amplified
+    /// noise, and audio that is already loud is left untouched.
+    private static func normalizePeak(_ pcm: inout Data) {
+        pcm.withUnsafeMutableBytes { (raw: UnsafeMutableRawBufferPointer) in
+            let samples = raw.bindMemory(to: Int16.self)
+            guard !samples.isEmpty else { return }
+
+            var maxAbs: Int32 = 0
+            for s in samples { maxAbs = max(maxAbs, abs(Int32(s))) }
+            guard maxAbs > 0 else { return }
+
+            let target: Int32 = 29_000                       // ≈ -1 dBFS
+            let gain = min(Double(target) / Double(maxAbs), 32.0)  // cap ≈ +30 dB
+            guard gain > 1.05 else { return }                // already loud enough
+
+            for i in samples.indices {
+                let v = Double(samples[i]) * gain
+                samples[i] = Int16(max(-32_768, min(32_767, v)))
+            }
+        }
     }
 
     /// Wrap raw little-endian PCM in a canonical 44-byte WAV header.
