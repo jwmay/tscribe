@@ -396,10 +396,16 @@ final class TranscriberModel: ObservableObject {
         player = p
     }
 
+    /// When the user last seeked by clicking a word/timestamp. Playhead
+    /// auto-follow stands down briefly after a user seek — the user is looking
+    /// at what they clicked; scrolling it away is both wrong and wasted work.
+    private(set) var lastUserSeekAt: Date = .distantPast
+
     /// Jump the playhead without changing play/pause state: while paused,
     /// clicking a word just moves the playhead (playback stays paused);
     /// while playing, playback continues from the new position.
     func seek(to seconds: TimeInterval) {
+        lastUserSeekAt = Date()
         player?.seek(to: CMTime(seconds: seconds, preferredTimescale: 600),
                      toleranceBefore: .zero, toleranceAfter: .zero)
     }

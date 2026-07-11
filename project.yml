@@ -15,7 +15,7 @@ configs:
 settings:
   base:
     MARKETING_VERSION: "2.0.0"
-    CURRENT_PROJECT_VERSION: "9"
+    CURRENT_PROJECT_VERSION: "10"
     SWIFT_VERSION: "5.0"
     DEVELOPMENT_TEAM: ""
 targets:

@@ -270,28 +270,25 @@ struct TranscriptView: View {
                     .padding(16)
                 }
                 .onChange(of: model.currentSegmentID) { _, id in
-                    // Follow the playhead ONLY during playback. While paused, a
-                    // segment change means the user clicked a word — chasing
-                    // their clicks with re-centering scrolls both fights them
-                    // and (clicked rapidly) queues overlapping animations.
-                    // Also: never while stepping matches, never to filtered-out
-                    // rows, and coalesced so at most one follow is in flight.
+                    // Follow the playhead ONLY during passive playback: never
+                    // while paused, never right after the user clicked a word
+                    // (they're looking at what they clicked — don't scroll it
+                    // away), never while stepping matches, never to filtered-out
+                    // rows. Coalesced so at most one follow is in flight.
                     pendingFollowScroll?.cancel()
                     guard model.isPlaying,
+                          Date().timeIntervalSince(model.lastUserSeekAt) > 1.0,
                           model.activeMatchID == nil,
                           let id, model.visibleSegments.contains(where: { $0.id == id }) else { return }
                     let work = DispatchWorkItem {
-                        scrollToSegment(id, proxy: proxy, animated: true)
+                        scrollToSegment(id, proxy: proxy)
                     }
                     pendingFollowScroll = work
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.2, execute: work)
                 }
                 .onChange(of: model.activeMatchID) { _, id in
                     guard let id else { return }
-                    // Instant, not animated: an animated long jump lays out every
-                    // row the viewport passes, and rapid ⌘G would queue dozens of
-                    // overlapping animations (the source of multi-second hangs).
-                    scrollToSegment(id, proxy: proxy, animated: false)
+                    scrollToSegment(id, proxy: proxy)
                 }
             }
         }
@@ -422,36 +419,28 @@ struct TranscriptView: View {
         }
     }
 
-    /// Scroll to a segment wherever it lives.
+    /// Scroll to a segment wherever it lives — always INSTANT, never animated.
+    /// An instant scroll is a single layout pass; animated scrolls proved to be
+    /// a hang factory (every trigger — ⌘G, playhead follow, click-follow —
+    /// eventually overlapped animations under rapid input, each frame paying
+    /// lazy-layout costs).
     ///
-    /// Fast path: if the row is already built (playback follow, nearby match
-    /// steps), one smooth scroll straight to it — no second hop, no visible
-    /// re-centering jump.
-    ///
-    /// Far path: rows nested inside not-yet-built lazy turn blocks can't be
-    /// reached by `scrollTo`, so hop to the enclosing turn block first (its id
-    /// is a direct child of the lazy list and always resolves), then re-center
-    /// on the exact segment once it exists. The second hop is cancellable:
-    /// rapid stepping (⌘G held down) must not leave a trail of stale delayed
-    /// scrolls that later fight over the viewport.
-    private func scrollToSegment(_ id: UUID, proxy: ScrollViewProxy, animated: Bool) {
+    /// Fast path: rows already built resolve directly. Far path: rows nested in
+    /// not-yet-built lazy turn blocks can't be reached by `scrollTo`, so hop to
+    /// the enclosing turn block first (its id is a direct child of the lazy
+    /// list and always resolves), then re-center on the exact segment once it
+    /// exists. The second hop is cancellable so rapid stepping never leaves
+    /// stale scrolls fighting over the viewport.
+    private func scrollToSegment(_ id: UUID, proxy: ScrollViewProxy) {
         pendingScrollHop?.cancel()
 
         if materializedRows.ids.contains(id) {
-            if animated {
-                withAnimation(.easeInOut(duration: 0.2)) { proxy.scrollTo(id, anchor: .center) }
-            } else {
-                proxy.scrollTo(id, anchor: .center)
-            }
+            proxy.scrollTo(id, anchor: .center)
             return
         }
 
         let outer = model.turnGroups.first(where: { g in g.segments.contains(where: { $0.id == id }) })?.id ?? id
-        if animated {
-            withAnimation(.easeInOut(duration: 0.2)) { proxy.scrollTo(outer, anchor: .center) }
-        } else {
-            proxy.scrollTo(outer, anchor: .center)
-        }
+        proxy.scrollTo(outer, anchor: .center)
         guard outer != id else { return }
         let hop = DispatchWorkItem {
             proxy.scrollTo(id, anchor: .center)   // rows exist now; precise, instant
