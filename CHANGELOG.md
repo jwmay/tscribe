@@ -66,7 +66,9 @@ shows **when it actually happened**, and makes everything **findable** — still
   and Whisper repetition loops — especially with the silence-reduction (VAD)
   option enabled.
 - Search-match stepping and playhead auto-scroll now reliably reach lines that
-  weren't yet rendered (two-phase scroll through the lazy list).
+  weren't yet rendered (two-phase scroll through the lazy list), and playback
+  auto-scroll glides to the active line in one smooth motion instead of
+  scrolling and then visibly re-centering.
 - The transcript sidebar opens wide enough for all controls (and the search
   field can no longer collapse to zero width).
 

@@ -68,11 +68,19 @@ private struct MissingMediaView: View {
     }
 }
 
+/// Which segment rows the lazy list currently has built, tracked via row
+/// onAppear/onDisappear. A plain class held in @State: mutating it does NOT
+/// invalidate any view — it's bookkeeping for scroll decisions only.
+private final class MaterializedRows {
+    var ids: Set<UUID> = []
+}
+
 struct TranscriptView: View {
     @ObservedObject var model: TranscriberModel
     @State private var showSpeakerSheet = false
     @State private var showClockSheet = false
     @State private var pendingScrollHop: DispatchWorkItem?
+    @State private var materializedRows = MaterializedRows()
     @FocusState private var searchFocused: Bool
 
     var body: some View {
@@ -246,7 +254,8 @@ struct TranscriptView: View {
                                 contextMatchIDs: shared.contextHighlight
                                     ? Set(group.segments.filter { model.matchesSearch($0) }.map(\.id)) : [],
                                 searchToken: shared.searchToken,
-                                model: model)
+                                model: model,
+                                rowTracker: materializedRows)
                                 .equatable()
                                 .id(group.id)
                         }
@@ -402,15 +411,30 @@ struct TranscriptView: View {
         }
     }
 
-    /// Scroll to a segment wherever it lives. Segment rows are nested inside
-    /// lazy turn blocks, and `scrollTo` can't reach ids that haven't rendered —
-    /// so scroll to the enclosing turn block first (its id is a direct child of
-    /// the lazy list and always resolves), then re-center on the exact segment
-    /// once it exists. The second hop is cancellable: rapid stepping (⌘G held
-    /// down) must not leave a trail of stale delayed scrolls that later fight
-    /// over the viewport.
+    /// Scroll to a segment wherever it lives.
+    ///
+    /// Fast path: if the row is already built (playback follow, nearby match
+    /// steps), one smooth scroll straight to it — no second hop, no visible
+    /// re-centering jump.
+    ///
+    /// Far path: rows nested inside not-yet-built lazy turn blocks can't be
+    /// reached by `scrollTo`, so hop to the enclosing turn block first (its id
+    /// is a direct child of the lazy list and always resolves), then re-center
+    /// on the exact segment once it exists. The second hop is cancellable:
+    /// rapid stepping (⌘G held down) must not leave a trail of stale delayed
+    /// scrolls that later fight over the viewport.
     private func scrollToSegment(_ id: UUID, proxy: ScrollViewProxy, animated: Bool) {
         pendingScrollHop?.cancel()
+
+        if materializedRows.ids.contains(id) {
+            if animated {
+                withAnimation(.easeInOut(duration: 0.2)) { proxy.scrollTo(id, anchor: .center) }
+            } else {
+                proxy.scrollTo(id, anchor: .center)
+            }
+            return
+        }
+
         let outer = model.turnGroups.first(where: { g in g.segments.contains(where: { $0.id == id }) })?.id ?? id
         if animated {
             withAnimation(.easeInOut(duration: 0.2)) { proxy.scrollTo(outer, anchor: .center) }
@@ -470,6 +494,7 @@ private struct TurnBlock: View, Equatable {
     let contextMatchIDs: Set<UUID>
     let searchToken: String?
     let model: TranscriberModel      // actions only — deliberately not @ObservedObject
+    let rowTracker: MaterializedRows // scroll bookkeeping — also not display state
 
     static func == (a: TurnBlock, b: TurnBlock) -> Bool {
         a.group == b.group
@@ -512,6 +537,8 @@ private struct TurnBlock: View, Equatable {
                            model: model)
                     .equatable()
                     .id(seg.id)
+                    .onAppear { rowTracker.ids.insert(seg.id) }
+                    .onDisappear { rowTracker.ids.remove(seg.id) }
             }
         }
     }
