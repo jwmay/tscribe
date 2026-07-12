@@ -514,6 +514,12 @@ final class TranscriberModel: ObservableObject {
     @Published var selectedSegmentIDs: Set<UUID> = []
     private var selectionAnchorID: UUID?
 
+    #if DEBUG
+    /// Debug-only staging harness (see `AppDelegate.applyStagingIfRequested`):
+    /// forces the Actual Time sheet open for a deterministic screenshot.
+    @Published var stageClockSheet = false
+    #endif
+
     /// ⌘-click: toggle one line in/out of the selection. The range anchor is
     /// always the last-clicked line (Finder semantics), even on a deselect.
     func toggleSelection(_ id: UUID) {

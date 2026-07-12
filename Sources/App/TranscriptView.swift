@@ -74,6 +74,26 @@ struct TranscriptView: View {
     @State private var lastFollowedSegment: UUID?
     @FocusState private var searchFocused: Bool
 
+    /// The Actual Time sheet opens on the toolbar button; in DEBUG the staging
+    /// harness can also force it open (`model.stageClockSheet`) for a screenshot.
+    private var clockSheetPresented: Binding<Bool> {
+        Binding(
+            get: {
+                #if DEBUG
+                return showClockSheet || model.stageClockSheet
+                #else
+                return showClockSheet
+                #endif
+            },
+            set: { newValue in
+                showClockSheet = newValue
+                #if DEBUG
+                if !newValue { model.stageClockSheet = false }
+                #endif
+            }
+        )
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             toolbar
@@ -100,7 +120,7 @@ struct TranscriptView: View {
         .sheet(isPresented: $showSpeakerSheet) {
             SpeakerCountSheet { count in model.identifySpeakers(numSpeakers: count) }
         }
-        .sheet(isPresented: $showClockSheet) {
+        .sheet(isPresented: clockSheetPresented) {
             ClockSyncSheet(model: model)
         }
         .alert("Couldn’t identify speakers",

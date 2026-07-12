@@ -88,7 +88,14 @@ struct DropView: View {
             .frame(maxWidth: .infinity)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .onAppear { model.refreshRecents() }
+        .onAppear {
+            model.refreshRecents()
+            #if DEBUG
+            if let q = ProcessInfo.processInfo.environment["TSCRIBE_STAGE_LIBQUERY"], !q.isEmpty {
+                libraryQuery = q
+            }
+            #endif
+        }
     }
 
     /// Recents list, with a search field that scans *all* saved transcripts.
