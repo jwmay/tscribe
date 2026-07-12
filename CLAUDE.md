@@ -5,6 +5,12 @@ locally** with word-level timestamps, built for privileged/evidentiary legal wor
 out to a bundled `whisper-cli` (whisper.cpp `large-v3`, Metal) and parses its JSON output.
 Target user is non-technical, so install/first-run must be dead simple.
 
+## Branch workflow
+
+- **`dev`** — active development. New features and fixes are built and committed here.
+- **`main`** — production. Only release-ready code; merge `dev` → `main` when shipping.
+- Release tags (`vX.Y.Z`) are cut on `main` and trigger the Standard CI release.
+
 ## Two editions, one codebase
 
 The app ships in **two editions built from the same sources**, selected at build time by the
