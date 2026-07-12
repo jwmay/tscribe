@@ -14,21 +14,19 @@ struct FlowLayout: Layout {
 
     struct Cache {
         var sizes: [CGSize]
-        /// The last real width this layout was given. Nil-width probes (which
-        /// lazy stacks use to ESTIMATE unbuilt rows) are answered with this,
-        /// so estimated heights match actual heights. Answering nil with
-        /// "one infinite line" made every estimate wildly short, and the
-        /// scroll view's offset adjustments + lazy re-phasing fed each other
-        /// into a main-thread livelock (transactions never drained).
-        var lastConcreteWidth: CGFloat?
     }
 
-    /// Fallback wrap width before any real layout pass has happened
-    /// (≈ the transcript pane's content width).
+    /// Wrap width used to answer width-less probes (≈ the transcript pane's
+    /// content width). A Layout MUST be a pure function of (proposal,
+    /// subviews): an earlier version remembered the last concrete width and
+    /// answered nil probes with it, which meant identical probes returned
+    /// different heights depending on layout history — containers can never
+    /// converge on a layout that changes its mind, and that inconsistency
+    /// sustained main-thread livelocks.
     private static let nominalWidth: CGFloat = 640
 
     func makeCache(subviews: Subviews) -> Cache {
-        Cache(sizes: subviews.map { $0.sizeThatFits(.unspecified) }, lastConcreteWidth: nil)
+        Cache(sizes: subviews.map { $0.sizeThatFits(.unspecified) })
     }
 
     func updateCache(_ cache: inout Cache, subviews: Subviews) {
@@ -48,9 +46,8 @@ struct FlowLayout: Layout {
         let maxWidth: CGFloat
         if let w = proposal.width, w.isFinite, w > 0 {
             maxWidth = w
-            cache.lastConcreteWidth = w
         } else {
-            maxWidth = cache.lastConcreteWidth ?? Self.nominalWidth
+            maxWidth = Self.nominalWidth
         }
         var x: CGFloat = 0, y: CGFloat = 0, lineHeight: CGFloat = 0
 
@@ -67,7 +64,6 @@ struct FlowLayout: Layout {
     }
 
     func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout Cache) {
-        if bounds.width.isFinite, bounds.width > 0 { cache.lastConcreteWidth = bounds.width }
         let sizes = sizes(&cache, subviews)
         var x: CGFloat = 0, y: CGFloat = 0, lineHeight: CGFloat = 0
 

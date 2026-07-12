@@ -70,7 +70,6 @@ struct TranscriptView: View {
     @ObservedObject var model: TranscriberModel
     @State private var showSpeakerSheet = false
     @State private var showClockSheet = false
-    @State private var pendingScrollHop: DispatchWorkItem?
     @State private var pendingFollowScroll: DispatchWorkItem?
     @State private var lastFollowedSegment: UUID?
     @FocusState private var searchFocused: Bool
@@ -215,7 +214,13 @@ struct TranscriptView: View {
             Divider()
             ScrollViewReader { proxy in
                 ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 10) {
+                    // Eager, not lazy — deliberately. Every main-thread livelock
+                    // this app ever produced lived inside LazyVStack's
+                    // placement/estimation/phase machinery. Rows are cheap to
+                    // keep resident (value views, equatable-skipped, playhead
+                    // isolated), so we pay one full layout at document-open and
+                    // the entire lazy apparatus ceases to exist.
+                    VStack(alignment: .leading, spacing: 10) {
                         if model.turnGroups.isEmpty && model.isFiltering {
                             Text("No matches\(model.searchText.isEmpty ? "" : " for “\(model.searchText)”").")
                                 .font(.callout)
@@ -409,28 +414,11 @@ struct TranscriptView: View {
         }
     }
 
-    /// Scroll to a segment wherever it lives — always INSTANT, never animated.
-    /// An instant scroll is a single layout pass; animated scrolls proved to be
-    /// a hang factory (every trigger — ⌘G, playhead follow, click-follow —
-    /// eventually overlapped animations under rapid input, each frame paying
-    /// lazy-layout costs).
-    ///
-    /// Fast path: rows already built resolve directly. Far path: rows nested in
-    /// not-yet-built lazy turn blocks can't be reached by `scrollTo`, so hop to
-    /// the enclosing turn block first (its id is a direct child of the lazy
-    /// list and always resolves), then re-center on the exact segment once it
-    /// exists. The second hop is cancellable so rapid stepping never leaves
-    /// stale scrolls fighting over the viewport.
+    /// Scroll to a segment — always INSTANT, never animated (overlapping scroll
+    /// animations were a hang factory under rapid input), and always a single
+    /// direct call: with an eager list every row's id resolves immediately.
     private func scrollToSegment(_ id: UUID, proxy: ScrollViewProxy) {
-        pendingScrollHop?.cancel()
-        let outer = model.turnGroups.first(where: { g in g.segments.contains(where: { $0.id == id }) })?.id ?? id
-        proxy.scrollTo(outer, anchor: .center)
-        guard outer != id else { return }
-        let hop = DispatchWorkItem {
-            proxy.scrollTo(id, anchor: .center)   // rows exist now; precise, instant
-        }
-        pendingScrollHop = hop
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25, execute: hop)
+        proxy.scrollTo(id, anchor: .center)
     }
 
     /// Everything the row views need from the model, gathered once per update
