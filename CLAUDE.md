@@ -159,6 +159,17 @@ the Standard CI release). No checked-in Info.plist (`GENERATE_INFOPLIST_FILE: YE
 
 ## Gotchas
 
+- **The transcript list is deliberately EAGER (`VStack`, not `LazyVStack`) and
+  `FlowLayout` must stay a pure function of (proposal, subviews).** A long
+  campaign of main-thread livelocks (see CHANGELOG 2.0.0) all executed inside
+  LazyVStack's placement/estimation/phase machinery, fed at various times by:
+  per-row `.onAppear`/`.transition` phase registrations, history-dependent
+  layout answers, animated programmatic scrolls, and the 10 Hz playhead being
+  published on the whole-view model. The survivors of that campaign: eager
+  list + equatable value rows (`TurnBlock`/`SegmentRow` don't observe the
+  model) + cached derived state (`turnGroups` etc.) + `PlaybackClock` isolated
+  from the view graph + instant-only scrolls. Debug builds have a `--stress`
+  storm mode (TscribeApp.swift) — run it before touching any of this.
 - **Courtroom recorders (FTR/JAVS…) write one audio track per microphone**, and the first
   is often nearly silent. `AudioExtractor` therefore mixes **all** audio tracks
   (`AVAssetReaderAudioMixOutput`) and **peak-normalizes** quiet audio (+30 dB cap). Reading
