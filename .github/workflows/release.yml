@@ -137,19 +137,83 @@ jobs:
           echo "SIGN_ID=$SIGN_ID" >> "$GITHUB_ENV"
           echo "NOTARY_PROFILE=tscribe-notary" >> "$GITHUB_ENV"
 
-      - name: Package Standard DMG
+      # Builds dist/Tscribe.dmg (the human download) AND dist/Tscribe.zip (what Sparkle
+      # actually installs). The zip is created after the app is notarized + stapled, so the
+      # app it contains validates offline.
+      - name: Package Standard DMG + update zip
         run: scripts/package-standard.sh
 
-      # Prove the released artifact is actually what we think it is. `source=Notarized
+      # Prove the released artifacts are actually what we think they are. `source=Notarized
       # Developer ID` is the verdict that means "opens on a plain double-click".
+      #
+      # The ZIP is checked as carefully as the DMG, because it is the artifact that Sparkle
+      # will silently swap onto a user's machine. An unnotarized or unstapled app there
+      # would fail Gatekeeper on relaunch AFTER the old version had already been replaced —
+      # a far worse failure than a bad download.
       - name: Verify signature + notarization
         if: env.HAS_SIGNING == 'true'
         run: |
           set -euo pipefail
+
+          echo "--- DMG ---"
           spctl -a -vvv -t install dist/Tscribe.dmg
           spctl -a -vvv -t install dist/Tscribe.dmg 2>&1 | grep -q "source=Notarized Developer ID" \
             || { echo "DMG is not notarized — refusing to publish"; exit 1; }
           xcrun stapler validate dist/Tscribe.dmg
+
+          echo "--- update zip (the artifact Sparkle installs) ---"
+          WORK="$(mktemp -d)"
+          ditto -x -k dist/Tscribe.zip "$WORK"
+          spctl -a -vvv -t exec "$WORK/Tscribe.app" 2>&1 | grep -q "source=Notarized Developer ID" \
+            || { echo "The app inside Tscribe.zip is not notarized — refusing to publish an update that would fail Gatekeeper"; exit 1; }
+          xcrun stapler validate "$WORK/Tscribe.app" \
+            || { echo "The app inside Tscribe.zip has no stapled ticket — it would need a network check to launch"; exit 1; }
+          codesign --verify --deep --strict "$WORK/Tscribe.app"
+          # Sparkle's nested code (2 XPC services, Autoupdate, Updater.app) must carry OUR
+          # Developer ID, not the ad-hoc signature it ships with.
+          for p in Contents/Frameworks/Sparkle.framework \
+                   Contents/Frameworks/Sparkle.framework/Versions/B/Updater.app \
+                   Contents/Frameworks/Sparkle.framework/Versions/B/Autoupdate \
+                   Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/Downloader.xpc \
+                   Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/Installer.xpc; do
+            codesign -dv --verbose=4 "$WORK/Tscribe.app/$p" 2>&1 | grep -q "Authority=Developer ID Application" \
+              || { echo "Sparkle component not signed with the Developer ID: $p"; exit 1; }
+          done
+          rm -rf "$WORK"
+          echo "OK: DMG and update zip are both notarized, stapled, and fully signed."
+
+      # The appcast is what makes an update reachable. Generate it on the runner, where the
+      # freshly-built zip is — signing it needs Sparkle's sign_update and the EdDSA private
+      # key, which never leaves the secret (it's piped in on stdin, never written to disk,
+      # never passed as an argv that could surface in a log).
+      # One source of truth for "what changed": the CHANGELOG entry becomes both the GitHub
+      # Release body and the notes Sparkle shows in the update dialog.
+      - name: Build release notes
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          python3 scripts/release-notes.py --version "$VERSION"
+
+      - name: Generate appcast
+        if: ${{ startsWith(github.ref, 'refs/tags/v') && env.HAS_SIGNING == 'true' }}
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          # A signed, notarized release with no appcast is worse than useless: nobody is told
+          # it exists and the update channel silently dies. Fail loudly instead.
+          [ -n "$SPARKLE_PRIVATE_KEY" ] \
+            || { echo "SPARKLE_PRIVATE_KEY secret is missing — refusing to publish a release that no one can update to"; exit 1; }
+          TAG="${GITHUB_REF_NAME}"
+          scripts/make-appcast.sh \
+            --app  "build/Build/Products/ReleaseStandard/Tscribe.app" \
+            --zip  "dist/Tscribe.zip" \
+            --tag  "$TAG" \
+            --download-url "https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/Tscribe.zip" \
+            --notes "release-notes.html" \
+            --out  "dist/appcast.xml"
+          cat dist/appcast.xml
 
       - name: Clean up signing keychain
         if: ${{ always() && env.HAS_SIGNING == 'true' }}
@@ -159,19 +223,111 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: Tscribe-dmg
-          path: dist/Tscribe.dmg
+          path: |
+            dist/Tscribe.dmg
+            dist/Tscribe.zip
           if-no-files-found: error
 
+      # Release assets go up BEFORE the appcast is published, so the feed never advertises a
+      # download that 404s. (The appcast's enclosure URL points at Tscribe.zip here.)
       - name: Attach to GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          set -euo pipefail
           TAG="${GITHUB_REF_NAME}"
+
+          # Built as a file, not an inline --notes string: a heredoc inside a YAML block
+          # scalar quietly bakes the workflow's own indentation into the release body.
+          {
+            cat release-notes.md
+            cat <<'FOOTER'
+
+          ---
+
+          **Tscribe.dmg** is the installer — that's the one you want.
+          **Tscribe.zip** is the same app in the format the in-app updater uses; you don't need to download it.
+
+          Transcription and speaker identification run entirely on your Mac. Your recordings and transcripts never leave it. A Complete edition (speech model bundled, ~2.7 GB, no first-launch download, no network access at all) is distributed separately.
+          FOOTER
+          } > body.md
+
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" dist/Tscribe.dmg --clobber
+            gh release upload "$TAG" dist/Tscribe.dmg dist/Tscribe.zip --clobber
+            gh release edit "$TAG" --notes-file body.md
           else
-            gh release create "$TAG" dist/Tscribe.dmg \
-              --title "Tscribe $TAG" \
-              --notes "Tscribe — a small download that fetches its speech model (~2.9 GB) once on first launch, then runs fully offline. Transcription and speaker identification both run entirely on your Mac; your recordings and transcripts never leave it. A Complete edition (model bundled, ~2.7 GB, no first-launch download) is distributed separately."
+            gh release create "$TAG" dist/Tscribe.dmg dist/Tscribe.zip \
+              --title "Tscribe $TAG" --notes-file body.md
           fi
+
+      # Hand the appcast to the Pages job.
+      - name: Upload appcast artifact
+        if: ${{ startsWith(github.ref, 'refs/tags/v') && env.HAS_SIGNING == 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: appcast
+          path: dist/appcast.xml
+          if-no-files-found: error
+
+  # Publishes the appcast at https://updates.docmayscience.com/appcast.xml — the URL compiled
+  # into every Standard build (SUFeedURL in assets/Info-Sparkle.plist), and therefore one we
+  # can never change without stranding everyone already running Tscribe.
+  #
+  # This is a GitHub Pages site owned by THIS repo, pointed at a subdomain the maintainer
+  # owns. That means no cross-repo token to expire, and — because the domain is ours — the
+  # feed can be moved off GitHub later without touching a single shipped app.
+  #
+  # Separate job so it runs only after the release assets are actually up.
+  publish-appcast:
+    needs: build-standard
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download appcast
+        uses: actions/download-artifact@v4
+        with:
+          name: appcast
+          path: site
+
+      - name: Assemble the Pages site
+        run: |
+          set -euo pipefail
+          # The custom domain comes from the SAME place the app's feed URL does, so the site
+          # and the app can't drift onto different hosts. (This job runs on Linux, so it's
+          # plistlib, not plutil.)
+          FEED_URL="$(python3 -c "import plistlib;print(plistlib.load(open('assets/Info-Sparkle.plist','rb'))['SUFeedURL'])")"
+          HOST="$(printf '%s' "$FEED_URL" | sed -E 's#^https?://([^/]+).*#\1#')"
+          echo "$HOST" > site/CNAME
+          echo "Publishing $FEED_URL (CNAME: $HOST)"
+          [ -s site/appcast.xml ] || { echo "appcast.xml is empty"; exit 1; }
+
+          # A bare host that serves one XML file looks broken (or shady) to anyone who visits
+          # it. Say what it is — this domain is quoted in the app's privacy copy.
+          cat > site/index.html <<'HTML'
+          <!doctype html>
+          <meta charset="utf-8">
+          <title>Tscribe updates</title>
+          <style>body{font:16px/1.6 -apple-system,system-ui,sans-serif;max-width:34rem;margin:12vh auto;padding:0 1.5rem;color:#222}code{background:#f2f2f2;padding:.1em .35em;border-radius:3px}a{color:#0a7}</style>
+          <h1>Tscribe updates</h1>
+          <p>This host serves the update feed for <a href="https://docmayscience.com/tscribe/">Tscribe</a>, a fully offline transcription app for macOS.</p>
+          <p>The Standard edition asks <code>/appcast.xml</code> once a day whether a newer version exists, and only if you turned that on. It is the only outbound connection Tscribe makes: no analytics, no telemetry, nothing about you or your Mac. The Complete edition never connects at all.</p>
+          <p>Updates are signed with an EdDSA key; Tscribe installs nothing that isn't signed by it.</p>
+          <p><a href="/appcast.xml">appcast.xml</a></p>
+          HTML
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - id: deployment
+        uses: actions/deploy-pages@v4

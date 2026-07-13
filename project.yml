@@ -14,10 +14,21 @@ configs:
   ReleaseStandard: release
 settings:
   base:
-    MARKETING_VERSION: "2.0.1"
-    CURRENT_PROJECT_VERSION: "16"
+    MARKETING_VERSION: "2.1.0"
+    CURRENT_PROJECT_VERSION: "17"
     SWIFT_VERSION: "5.0"
     DEVELOPMENT_TEAM: ""
+# Sparkle (auto-update) is a Standard-only dependency, but SPM has no notion of a
+# per-configuration dependency: declaring it here links it into EVERY config. The
+# Complete edition's "no network, ever" claim survives that because the link is made to
+# genuinely disappear — Complete compiles without SPARKLE_UPDATES, so it references zero
+# Sparkle symbols, and `-dead_strip_dylibs` (below) drops the load command. package.sh
+# then deletes the embedded framework, and the offline-audit PROVES both are gone
+# (otool -L + a bundle-wide grep). See "Auto-updates (Sparkle)" in CLAUDE.md.
+packages:
+  Sparkle:
+    url: https://github.com/sparkle-project/Sparkle
+    exactVersion: "2.9.4"
 targets:
   tscribe:
     type: application
@@ -25,6 +36,8 @@ targets:
     sources:
       - Sources/App
       - Sources/Core
+    dependencies:
+      - package: Sparkle
     settings:
       base:
         PRODUCT_NAME: Tscribe
@@ -36,9 +49,22 @@ targets:
         COMBINE_HIDPI_IMAGES: YES
         ENABLE_USER_SCRIPT_SANDBOXING: NO
       configs:
-        # Standard edition: compile in the downloader + onboarding (guarded by #if DOWNLOAD_MODEL).
+        # Debug defines SPARKLE_UPDATES so the update flow can be exercised locally (it
+        # stays inert until the user opts in). Debug does NOT define DOWNLOAD_MODEL — it's
+        # a Complete-style dev build using the ~/Developer/whisper.cpp model fallback.
+        Debug:
+          SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) SPARKLE_UPDATES"
+          INFOPLIST_FILE: assets/Info-Sparkle.plist
+        # Standard edition: the model downloader + onboarding (#if DOWNLOAD_MODEL) and the
+        # Sparkle updater (#if SPARKLE_UPDATES). The Sparkle Info.plist keys (feed URL,
+        # public EdDSA key) are scoped to this config, so they cannot reach a Complete build.
         ReleaseStandard:
-          SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) DOWNLOAD_MODEL"
+          SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) DOWNLOAD_MODEL SPARKLE_UPDATES"
+          INFOPLIST_FILE: assets/Info-Sparkle.plist
+        # Complete edition: no SPARKLE_UPDATES, no Sparkle Info.plist keys, and no Sparkle
+        # load command — nothing references the framework, so the linker drops it entirely.
+        Release:
+          OTHER_LDFLAGS: "$(inherited) -Wl,-dead_strip_dylibs"
 # Shared scheme so `xcodebuild -scheme tscribe -configuration <Debug|Release|ReleaseStandard>`
 # works deterministically on a fresh checkout (e.g. CI), not just after opening in Xcode.
 schemes:

@@ -102,6 +102,12 @@ fi
 echo "==> Building $CONFIG"
 cd "$PROJECT_DIR"
 xcodegen generate >/dev/null
+# SPM clones dependencies (Sparkle) as *bare* git repos. A developer whose global git
+# config sets `safe.bareRepository = explicit` (a reasonable hardening choice) makes git
+# refuse to operate in them, and package resolution dies with "Couldn't get the list of
+# tags". Scope the exemption to this build's git subprocesses rather than asking anyone to
+# weaken their global config. Harmless where the setting isn't used (e.g. CI).
+GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.bareRepository GIT_CONFIG_VALUE_0=all \
 xcodebuild -project tscribe.xcodeproj -scheme tscribe -configuration "$CONFIG" \
   -derivedDataPath "$BUILD_DIR" CODE_SIGNING_ALLOWED=NO build >/dev/null
 
@@ -140,15 +146,103 @@ fi
 CREDITS="$PROJECT_DIR/assets/Credits.html"
 [ -f "$CREDITS" ] && cp "$CREDITS" "$RES/Credits.html"
 
-# Complete offline-audit: the "no network at all" claim should be auditable — the
-# Hugging Face URL only exists behind #if DOWNLOAD_MODEL, so it must be absent here.
+BIN="$APP/Contents/MacOS/$APP_NAME"
+PLIST="$APP/Contents/Info.plist"
+SPARKLE_FW="$APP/Contents/Frameworks/Sparkle.framework"
+
+# The appcast host, read from the ONE place it is defined, so this audit can never drift
+# out of sync with what the app actually ships (change the feed URL and the audit follows).
+FEED_URL="$(/usr/libexec/PlistBuddy -c 'Print :SUFeedURL' "$PROJECT_DIR/assets/Info-Sparkle.plist" 2>/dev/null || true)"
+FEED_HOST="$(printf '%s' "$FEED_URL" | sed -E 's#^https?://([^/]+).*#\1#')"
+[ -n "$FEED_HOST" ] || { echo "   Could not read SUFeedURL from assets/Info-Sparkle.plist"; exit 1; }
+
+# Sparkle: an SPM dependency links into EVERY config, so Xcode embeds the framework even in
+# the Complete build. Complete references zero Sparkle symbols and is linked with
+# -dead_strip_dylibs, so it carries no load command for it — which makes the embedded copy
+# dead weight that we can (and must) delete. The audit below then PROVES it's gone.
 if [ "$EDITION" = "complete" ]; then
-  echo "==> Offline audit: confirming no download URL in the Complete binary"
-  if strings -a "$APP/Contents/MacOS/$APP_NAME" | grep -q "huggingface.co"; then
-    echo "   FAIL: found a Hugging Face URL in the Complete build — networking code leaked in."
-    exit 1
+  if [ -d "$SPARKLE_FW" ]; then
+    echo "    - removing embedded Sparkle.framework (Complete makes no network connections)"
+    rm -rf "$SPARKLE_FW"
+    rmdir "$APP/Contents/Frameworks" 2>/dev/null || true
   fi
-  echo "   OK: no download URL present"
+else
+  [ -d "$SPARKLE_FW" ] || { echo "   MISSING: $SPARKLE_FW — the Standard build must embed Sparkle"; exit 1; }
+  echo "    + Sparkle.framework embedded (auto-updates)"
+fi
+
+# Stamp the packaging date. The Complete edition can never ask whether it's out of date, so
+# it instead compares this against today, entirely offline, and says so once it's genuinely
+# old. Must happen BEFORE signing — editing Info.plist afterwards would break the seal.
+BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+/usr/libexec/PlistBuddy -c "Add :TscribeBuildDate string $BUILD_DATE" "$PLIST" 2>/dev/null \
+  || /usr/libexec/PlistBuddy -c "Set :TscribeBuildDate $BUILD_DATE" "$PLIST"
+
+# ── Complete offline-audit ───────────────────────────────────────────────────────────────
+# The "no network, ever" claim is only worth something if it's checked. The Complete build
+# must contain no way to reach the network on its own: no model-download URL, and (since
+# 2.1) no updater either — no appcast URL, no Sparkle framework, no Sparkle load command,
+# no Sparkle Info.plist keys. All of it is behind #if DOWNLOAD_MODEL / #if SPARKLE_UPDATES,
+# so if any of it shows up here, a guard has been dropped and the edition is a lie.
+#
+# The one URL that legitimately remains is the Tscribe page (OfflineUpdateInfo), which is
+# only ever handed to NSWorkspace to open the user's *browser*. Tscribe still fetches
+# nothing. That's why we grep for the appcast host specifically, not for "any URL".
+if [ "$EDITION" = "complete" ]; then
+  echo "==> Offline audit (Complete): proving this build cannot phone home"
+  FAILED=0
+
+  if strings -a "$BIN" | grep -q "huggingface.co"; then
+    echo "   FAIL: Hugging Face model-download URL is in the binary — #if DOWNLOAD_MODEL leaked."
+    FAILED=1
+  else
+    echo "   OK: no model-download URL"
+  fi
+
+  if strings -a "$BIN" | grep -qiE "$FEED_HOST|appcast"; then
+    echo "   FAIL: appcast URL/reference is in the binary — #if SPARKLE_UPDATES leaked."
+    strings -a "$BIN" | grep -iE "$FEED_HOST|appcast" | head -5 | sed 's/^/         /'
+    FAILED=1
+  else
+    echo "   OK: no appcast URL ($FEED_HOST)"
+  fi
+
+  # A string can hide in a resource; a *load command* cannot. If the binary still links
+  # Sparkle, the framework isn't dead code and removing it above would crash the app at
+  # launch — so this check is both an audit and a safety net.
+  if otool -L "$BIN" | grep -qi sparkle; then
+    echo "   FAIL: the binary still links Sparkle.framework — it is NOT dead-stripped."
+    FAILED=1
+  else
+    echo "   OK: binary has no Sparkle load command (dead-stripped)"
+  fi
+
+  if [ -e "$SPARKLE_FW" ]; then
+    echo "   FAIL: Sparkle.framework is still embedded in the bundle."
+    FAILED=1
+  else
+    echo "   OK: no Sparkle.framework in the bundle"
+  fi
+
+  if /usr/libexec/PlistBuddy -c 'Print' "$PLIST" | grep -qE '^ *SU[A-Za-z]+ ='; then
+    echo "   FAIL: Sparkle SU* keys are in Info.plist."
+    FAILED=1
+  else
+    echo "   OK: no Sparkle keys in Info.plist"
+  fi
+
+  # Belt and braces: the feed host must not appear ANYWHERE in the bundle — not in a
+  # binary, not in a plist, not in a stray resource that got copied in.
+  if grep -rql "$FEED_HOST" "$APP" 2>/dev/null; then
+    echo "   FAIL: the appcast host appears somewhere in the bundle:"
+    grep -rql "$FEED_HOST" "$APP" 2>/dev/null | head -5 | sed 's/^/         /'
+    FAILED=1
+  else
+    echo "   OK: appcast host absent from the entire bundle"
+  fi
+
+  [ "$FAILED" = 0 ] || { echo "   Offline audit FAILED — refusing to package a Complete build that can reach the network."; exit 1; }
+  echo "   Offline audit passed."
 fi
 
 # Signing: ad-hoc by default (free path); Developer ID when SIGN_ID is set. Either way
@@ -157,11 +251,39 @@ SIGN_ID="${SIGN_ID:--}"
 NOTARY_PROFILE="${NOTARY_PROFILE:-}"
 ENTITLEMENTS="$PROJECT_DIR/assets/tscribe.entitlements"
 
+# Sparkle is not one binary — it's a framework containing four more pieces of code (an
+# updater .app, a relauncher, and two XPC services). Every one is nested code that must
+# carry our Developer ID, hardened runtime and secure timestamp, or notarization rejects
+# the bundle. They are signed individually, deepest first.
+#
+# Deliberately NOT `codesign --deep`: Sparkle's own docs warn against it (the Downloader
+# service may carry entitlements the others must not inherit), and Apple treats --deep as a
+# repair tool, not a signing strategy. --deep IS used to *verify*, below.
+SPARKLE_INNER=()
+if [ -d "$SPARKLE_FW" ]; then
+  V="$SPARKLE_FW/Versions/B"
+  SPARKLE_INNER=(
+    "$V/XPCServices/Installer.xpc"
+    "$V/XPCServices/Downloader.xpc"
+    "$V/Autoupdate"
+    "$V/Updater.app"
+    "$SPARKLE_FW"
+  )
+  for p in "${SPARKLE_INNER[@]}"; do
+    [ -e "$p" ] || { echo "   MISSING Sparkle component: $p"; exit 1; }
+  done
+fi
+
 INNER_BINS=( "$RES/whisper-cli" )
 [ "$DIAR_BUNDLED" = 1 ] && INNER_BINS+=( "$RES/sherpa-onnx-offline-speaker-diarization" )
 
 if [ "$SIGN_ID" = "-" ]; then
-  echo "==> Ad-hoc signing (inner binaries first, then the app)"
+  echo "==> Ad-hoc signing (nested code first, then the app)"
+  # `${arr[@]+"${arr[@]}"}` — expanding an empty array trips `set -u` on macOS's bash 3.2,
+  # and SPARKLE_INNER is empty for the Complete edition.
+  for p in ${SPARKLE_INNER[@]+"${SPARKLE_INNER[@]}"}; do
+    codesign --force --sign - --timestamp=none "$p"
+  done
   for b in "${INNER_BINS[@]}"; do
     codesign --force --sign - --timestamp=none "$b"
   done
@@ -169,7 +291,13 @@ if [ "$SIGN_ID" = "-" ]; then
   codesign --verify --verbose=2 "$APP" || echo "   (verify note above is expected for ad-hoc)"
 else
   echo "==> Developer ID signing: $SIGN_ID"
-  echo "    (hardened runtime + secure timestamp; inner binaries first, then the app)"
+  echo "    (hardened runtime + secure timestamp; nested code first, then the app)"
+  if [ ${#SPARKLE_INNER[@]} -gt 0 ]; then
+    echo "    signing Sparkle's nested code (2 XPC services, Autoupdate, Updater.app, framework)"
+    for p in "${SPARKLE_INNER[@]}"; do
+      codesign --force --options runtime --timestamp --sign "$SIGN_ID" "$p"
+    done
+  fi
   for b in "${INNER_BINS[@]}"; do
     codesign --force --options runtime --timestamp --sign "$SIGN_ID" "$b"
   done
@@ -205,8 +333,21 @@ elif [ "$SIGN_ID" != "-" ]; then
   echo "    The app is signed but NOT notarized — it will still warn on first launch."
 fi
 
-echo "==> Creating styled .dmg"
 mkdir -p "$DIST_DIR"
+
+# The Sparkle enclosure (Standard only). A zip, not the dmg: it's what Sparkle's docs
+# prescribe, it's a smaller download on the update path, and it keeps auto-updates
+# independent of the DMG-styling machinery (which already has one macOS-version landmine in
+# it — see CLAUDE.md). Zipped AFTER notarize+staple so the ticket travels inside the bundle
+# and the extracted app validates with no Gatekeeper network call.
+if [ "$EDITION" = "standard" ]; then
+  echo "==> Creating $APP_NAME.zip (Sparkle update enclosure)"
+  rm -f "$DIST_DIR/$APP_NAME.zip"
+  ditto -c -k --sequesterRsrc --keepParent "$APP" "$DIST_DIR/$APP_NAME.zip"
+  echo "   OK: $DIST_DIR/$APP_NAME.zip ($(du -sh "$DIST_DIR/$APP_NAME.zip" | cut -f1))"
+fi
+
+echo "==> Creating styled .dmg"
 rm -f "$DIST_DIR/$DMG_NAME"
 VOL="Tscribe Installer"
 BG_SRC="$PROJECT_DIR/assets/dmg/background.png"

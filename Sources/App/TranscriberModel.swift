@@ -225,6 +225,15 @@ final class TranscriberModel: ObservableObject {
     private var pendingMediaURL: URL?
     #endif
 
+    #if SPARKLE_UPDATES
+    /// Standard edition: Sparkle auto-updates. Inert until the user opts in.
+    let updater = UpdaterController()
+    #else
+    /// Complete edition: presents the "Tscribe can't check for updates" explainer, since
+    /// this build has no updater and never connects to anything.
+    @Published var showOfflineUpdateInfo = false
+    #endif
+
     init() {
         refreshRecents()
         #if DOWNLOAD_MODEL

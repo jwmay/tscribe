@@ -13,33 +13,43 @@ Target user is non-technical, so install/first-run must be dead simple.
 
 ## Two editions, one codebase
 
-The app ships in **two editions built from the same sources**, selected at build time by the
-`DOWNLOAD_MODEL` Swift compilation condition:
+The app ships in **two editions built from the same sources**, selected at build time by two
+Swift compilation conditions, `DOWNLOAD_MODEL` and `SPARKLE_UPDATES`:
 
-Both editions are the **complete app** — they differ only in how the speech model arrives.
+Both editions are the **complete app** — they differ only in how the speech model arrives and
+whether they can update themselves.
 
 | | **Standard** (primary) | **Complete** |
 |---|---|---|
-| Config | `ReleaseStandard` (defines `DOWNLOAD_MODEL`) | `Release` (`DOWNLOAD_MODEL` undefined) |
+| Config | `ReleaseStandard` (`DOWNLOAD_MODEL` + `SPARKLE_UPDATES`) | `Release` (neither) |
 | large-v3 model (2.9 GB) | downloaded on first launch → Application Support | bundled in `Contents/Resources` |
-| DMG | `dist/Tscribe.dmg` (a few MB) | `dist/Tscribe-Complete.dmg` (~2.7 GB) |
-| Network | one-time model download only | **none, ever** (auditable) |
+| Auto-update | Sparkle, **opt-in** (see below) | none — no updater code at all |
+| DMG | `dist/Tscribe.dmg` (~43 MB) | `dist/Tscribe-Complete.dmg` (~2.7 GB) |
+| Network | one-time model download + (if allowed) a daily update check | **none, ever** (auditable) |
 | Ships via | GitHub Release, built by CI | manual → Google Drive (too big for GitHub) |
 
 Same identity for both: bundle id `com.jwmay.tscribe`, name `Tscribe`, shared version line.
 Standard is the primary distribution; Complete is the offline variant. A Mac has one Tscribe.
 
-**Mechanism:** `DOWNLOAD_MODEL` decides *whether the build knows how to download*; the **filesystem**
-decides *whether the model is present yet*. All networking/onboarding code is wrapped in
-`#if DOWNLOAD_MODEL`, so the Complete binary contains **no** download URL or `URLSession` path — the
-offline claim is verifiable (and enforced by the packaging offline-audit). In the Complete build the
-onboarding code doesn't exist and the `.onboarding` stage is never reached.
+**Mechanism:** the compilation conditions decide *whether the build knows how to reach the
+network at all*; the **filesystem** decides *whether the model is present yet*. Every network
+path is wrapped in `#if DOWNLOAD_MODEL` (model download + onboarding) or `#if SPARKLE_UPDATES`
+(the updater), so the Complete binary contains **no** download URL, **no** appcast URL, and
+**no** Sparkle framework — the offline claim is verifiable, and the packaging offline-audit
+*proves* it on every build rather than trusting it. In the Complete build the onboarding code
+doesn't exist and the `.onboarding` stage is never reached.
+
+Two conditions rather than one because they are two different claims ("knows how to fetch a
+model" vs "knows how to update itself"), and because **Debug defines `SPARKLE_UPDATES` but not
+`DOWNLOAD_MODEL`** — so the update flow can be exercised locally without pretending to be a
+Standard build.
 
 ## Key files
 
 - `project.yml` — XcodeGen manifest (**source of truth**; `tscribe.xcodeproj` is generated +
-  gitignored — never edit the pbxproj). Defines the `Debug`/`Release`/`ReleaseStandard` configs and
-  the version. `xcodegen generate` regenerates the project.
+  gitignored — never edit the pbxproj). Defines the `Debug`/`Release`/`ReleaseStandard` configs, the
+  version, the Sparkle SPM dependency, and the per-config compilation conditions + `INFOPLIST_FILE`.
+  `xcodegen generate` regenerates the project.
 - `Sources/Core/EngineLocator.swift` — resolves `whisperCLI` / `model` / `vadModel`. Model
   precedence: **downloaded → bundled → dev-fallback (`~/Developer/whisper.cpp`)**. `isModelBundled`
   distinguishes Complete (true) from Standard (false) at runtime.
@@ -53,11 +63,14 @@ onboarding code doesn't exist and the `.onboarding` stage is never reached.
 - `Sources/App/OnboardingView.swift` — **`#if DOWNLOAD_MODEL`**. Full-window onboarding (intro → downloading →
   verifying → installing → failed), mirroring `MissingMediaView` + `WorkingView` patterns.
 - `Sources/App/ContentView.swift` — the `switch model.stage` window router (has the `.onboarding` case).
-- `scripts/package.sh` — `--edition standard|complete`; bundles engine, signs, builds a **styled DMG**
+- `scripts/package.sh` — `--edition standard|complete`; bundles engine, **signs Sparkle's nested code**
+  (Standard) or **strips the framework** (Complete), stamps `TscribeBuildDate`, emits `Tscribe.zip`
+  (the Sparkle enclosure), signs, builds a **styled DMG**
   (custom background, positioned app icon + Applications drop target, 128px icons, volume icon; volume
   name "Tscribe Installer"). Standard runs a **drift-guard** (local model SHA must match `ModelSpec.sha256`);
   Complete runs an **offline-audit** (fails if the Hugging Face URL leaked into the binary).
-  Signing is env-driven — see **Code signing & notarization** below.
+  Signing is env-driven — see **Code signing & notarization** below. The offline-audit is described
+  under **Auto-updates (Sparkle)**; it now also proves no updater leaked into Complete.
 - **DMG styling — how it works (macOS 26 gotcha).** The installer window layout lives in a committed
   `.DS_Store` template (`assets/dmg/DS_Store`). package.sh injects it into the mounted DMG headlessly
   (no Finder, no dmgbuild) — so it works in background shells and CI. This is required because on
@@ -76,7 +89,9 @@ onboarding code doesn't exist and the `.onboarding` stage is never reached.
     `tiffutil` HiDPI TIFF — Finder won't render those). Regenerate:
     `swiftc -O scripts/DMGBackgroundGen.swift -o /tmp/dmgbg && /tmp/dmgbg /tmp && cp /tmp/background@2x.png assets/dmg/background.png`.
     Icon coordinates in the generator must match the positions baked into the DS_Store template.
-- `.github/workflows/release.yml` — builds + attaches the **Standard** DMG (`Tscribe.dmg`) to a GitHub Release on `v*` tags.
+- `.github/workflows/release.yml` — on `v*` tags: builds + attaches the **Standard** DMG (`Tscribe.dmg`)
+  **and `Tscribe.zip`** to a GitHub Release, then (job `publish-appcast`) signs + publishes the appcast
+  to GitHub Pages. Refuses to publish anything that isn't `source=Notarized Developer ID`.
 - `engine/` — vendored small artifacts (`whisper-cli` ~3 MB, `ggml-silero-v5.1.2.bin` ~0.9 MB) so
   local + CI builds are hermetic. The 2.9 GB model is **never** committed.
 
@@ -132,6 +147,123 @@ display (`TranscriberModel.displayTimecode`) and in the document exports (TXT/RT
 media-relative** — wall-clock cues would break subtitle playback. Key files:
 `Sources/Core/ClockOCR.swift` (frame + OCR + `parseTime`), `Sources/App/ClockSyncSheet.swift`.
 The `test-media/icty-courtroom-3speakers.mp4` clip has a synthetic 10:47:30 clock for testing.
+
+## Auto-updates (Sparkle) — Standard edition only
+
+The Standard edition can update itself via **Sparkle 2.9.4** (SPM, `project.yml`). The Complete
+edition contains **no updater at all** — not the code, not the framework, not the URL — and the
+offline-audit proves it on every Complete build.
+
+**Privacy posture** (the users are lawyers holding privileged material):
+- **Opt-in, asked in our own words.** `SUEnableAutomaticChecks=false` is both the default *and*
+  (because the key is *present*) what stops Sparkle showing its own generic permission prompt.
+  `UpdateConsentSheet` asks once instead. With checks off Sparkle arms no timer and opens no
+  socket: an install whose owner said "no" makes **zero** outbound connections.
+- **No profiling.** ⚠️ `SUEnableSystemProfiling` alone is **not enough** — it only controls whether
+  Sparkle's *prompt* offers profiling. The key that gates transmission is **`SUSendProfileInfo`**.
+  Both are `false`, and `UpdaterController` also forces `sendsSystemProfile = false` at runtime.
+- **No silent installs** (`SUAutomaticallyUpdate=false`): the user always sees what changed.
+- **Signed updates only.** Sparkle installs nothing without a valid EdDSA signature from our key,
+  so a compromised appcast host or release asset still can't push a malicious Tscribe.
+
+**Key files**
+- `assets/Info-Sparkle.plist` — the `INFOPLIST_FILE` for **Debug + ReleaseStandard only** (Xcode
+  merges `GENERATE_INFOPLIST_FILE`'s keys on top of it). Holds `SUFeedURL` + `SUPublicEDKey` +
+  the privacy defaults. Release (Complete) has **no** `INFOPLIST_FILE`, which is what keeps the
+  appcast URL out of its Info.plist. Typed values (real booleans/integers) — `INFOPLIST_KEY_*`
+  build settings would inject them as **strings**, which Sparkle silently ignores.
+  ⚠️ Same double-hyphen rule as the entitlements. And **PlistBuddy strips comments** — edit by hand.
+- `Sources/App/UpdaterController.swift` — `#if SPARKLE_UPDATES`. Wraps `SPUStandardUpdaterController`.
+- `Sources/App/UpdateConsentSheet.swift` — `#if SPARKLE_UPDATES`. The first-run question, plus
+  `CheckForUpdatesMenuItem` and `AutoUpdateToggle`. These are separate **views** on purpose: the
+  updater is a *nested* ObservableObject, so its changes don't republish through `model` and a bare
+  `Button(...).disabled(...)` in `.commands` would go stale.
+- `Sources/App/OfflineUpdateInfo.swift` — `#if !SPARKLE_UPDATES`. The Complete edition's answer:
+  it can't check, so it compares its **stamped build date** (`TscribeBuildDate`, injected into
+  Info.plist by package.sh) against today, entirely offline, and offers to open the Tscribe page in
+  the user's **browser**. Tscribe itself still connects to nothing.
+- `scripts/make-appcast.sh` — signs the zip (`sign_update`) and emits a one-item appcast.
+- `scripts/release-notes.py` — lifts the version's CHANGELOG section into the release body *and* the
+  appcast `<description>` (embedded, not a `releaseNotesLink`, so Sparkle needn't fetch a 2nd host).
+
+**Consent is asked outside onboarding, deliberately.** A user upgrading from a pre-Sparkle build
+never sees onboarding, so consent can't live there or they'd never be asked. It's a sheet on the
+first launch that reaches a normal screen (`UpdateSheets` in ContentView).
+
+### How Complete stays clean (the load-bearing trick)
+
+An SPM dependency links into **every** configuration — there is no per-config dependency. So:
+1. Complete compiles without `SPARKLE_UPDATES` ⇒ references **zero** Sparkle symbols.
+2. Release sets `OTHER_LDFLAGS: -Wl,-dead_strip_dylibs` ⇒ the linker **drops the load command**
+   (verified: `otool -L` shows no Sparkle).
+3. Because nothing links it, `package.sh` can safely **delete** `Contents/Frameworks/Sparkle.framework`
+   (Xcode's embed phase copies it in regardless).
+4. The **offline-audit** then proves all of it: no `huggingface.co`, no appcast host *anywhere in the
+   bundle*, no Sparkle load command, no `Sparkle.framework`, no `SU*` Info.plist keys.
+
+Steps 2 and 3 are a pair — **if you ever remove `-dead_strip_dylibs`, the Complete app will crash at
+launch** (dyld can't find the framework package.sh deleted). The `otool -L` check in the audit is what
+catches that, so don't weaken it. The audit has been negative-tested: giving Release the Sparkle
+condition makes it fail with 3 errors.
+
+The one URL that legitimately survives in the Complete binary is the Tscribe **page** (docmayscience.com/tscribe/),
+which is only ever handed to `NSWorkspace` to open a browser. That's why the audit greps for the
+*appcast host* specifically, not for "any URL".
+
+### Signing Sparkle's nested code
+
+Sparkle isn't one binary — the framework contains **four more** pieces of code. `package.sh` signs
+them individually, **deepest first**, with Developer ID + hardened runtime + secure timestamp:
+
+```
+Sparkle.framework/Versions/B/XPCServices/Installer.xpc
+Sparkle.framework/Versions/B/XPCServices/Downloader.xpc
+Sparkle.framework/Versions/B/Autoupdate
+Sparkle.framework/Versions/B/Updater.app
+Sparkle.framework                       ← framework last, then the CLIs, then the app
+```
+
+**Never `codesign --deep` to sign** (Sparkle's own docs warn against it; Apple treats it as a repair
+tool). `--deep` is fine to *verify*. No entitlements are needed — once everything carries our Team ID,
+library validation is satisfied. Verified: Apple's notary service **accepted** the bundle, and all five
+components report `Developer ID Application: Joseph May (B5MMX2KMWW)` + `flags=0x10000(runtime)` + a timestamp.
+
+### The update artifact is a ZIP, not the DMG
+
+`package.sh` emits `dist/Tscribe.zip` (`ditto -c -k --sequesterRsrc --keepParent`) **after** the app is
+notarized + stapled, so the extracted app carries its ticket and validates with no network check.
+Sparkle *can* consume our styled DMG (it skips dotfiles and symlinks), but the zip is smaller on the
+update path and keeps auto-updates independent of the DMG-styling machinery.
+
+⚠️ **Sparkle does not enforce notarization** — it gates on the EdDSA signature and a code-signature
+match, and will happily install an un-notarized Developer-ID build (observed). So the CI check that
+**refuses to publish a zip that isn't `source=Notarized Developer ID`** is the only thing standing
+between users and an app that trips Gatekeeper *after* the old version is already gone. Don't remove it.
+
+### Releasing / the appcast
+
+- Feed: **`https://updates.docmayscience.com/appcast.xml`** — GitHub Pages **of this repo**, on a
+  subdomain the maintainer owns. No cross-repo token; and because the domain is ours, the feed can
+  move off GitHub later without stranding shipped apps. This URL is compiled into every Standard
+  build and **can never change**.
+- CI (`release.yml`, job `publish-appcast`) generates + signs the appcast and deploys it to Pages
+  **after** the release assets are uploaded, so the feed never advertises a 404.
+- Enclosure → the `Tscribe.zip` asset on the GitHub Release.
+- **EdDSA key**: private key lives in the login keychain (`generate_keys`), never committed. CI reads
+  it from the `SPARKLE_PRIVATE_KEY` secret (from `generate_keys -x`) and pipes it to `sign_update` on
+  **stdin** — never a file, never an argv, so it can't surface in `ps` or a log.
+- ⚠️ **Locally, `sign_update` will hang on a keychain-access prompt** (it's a different binary from the
+  `generate_keys` that created the item, so it isn't in the item's ACL). Click Allow, or set
+  `SPARKLE_PRIVATE_KEY` and take the same stdin path CI uses.
+- Sparkle's `sign_update` / `generate_appcast` come free inside the SPM artifact
+  (`build/SourcePackages/artifacts/sparkle/Sparkle/bin/`) — nothing extra to download or pin.
+
+### Gotcha: SPM + `safe.bareRepository`
+
+SPM clones dependencies as **bare** git repos. A global `safe.bareRepository = explicit` (reasonable
+hardening) makes git refuse to touch them and package resolution dies with *"Couldn't get the list of
+tags"*. `package.sh` scopes an exemption to its own `xcodebuild` via `GIT_CONFIG_COUNT/KEY_0/VALUE_0`
+rather than asking anyone to weaken their global config.
 
 ## Common tasks (slash commands in `.claude/commands/`)
 

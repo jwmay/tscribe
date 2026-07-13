@@ -80,6 +80,8 @@ struct DropView: View {
                         .frame(maxWidth: 470)
                 }
 
+                updateControls
+
                 if !model.recents.isEmpty {
                     librarySection
                 }
@@ -96,6 +98,31 @@ struct DropView: View {
             }
             #endif
         }
+    }
+
+    /// The user's standing choice about update checks.
+    ///
+    /// Standard: a toggle, so the first-run answer is never a life sentence either way.
+    /// Complete: it cannot check, so there is nothing to toggle — instead, once the build
+    /// is genuinely old, say so. That's a local date comparison against a date stamped into
+    /// Info.plist at package time; it opens no connection and sends nothing.
+    @ViewBuilder
+    private var updateControls: some View {
+        #if SPARKLE_UPDATES
+        AutoUpdateToggle(updater: model.updater)
+        #else
+        if OfflineUpdateInfo.isStale {
+            Button {
+                model.showOfflineUpdateInfo = true
+            } label: {
+                Label("This copy is from \(OfflineUpdateInfo.buildDateText). A newer version may exist.",
+                      systemImage: "clock.arrow.circlepath")
+                    .font(.footnote)
+            }
+            .buttonStyle(.link)
+            .foregroundStyle(.tertiary)
+        }
+        #endif
     }
 
     /// Recents list, with a search field that scans *all* saved transcripts.
