@@ -258,6 +258,69 @@ between users and an app that trips Gatekeeper *after* the old version is alread
 - Sparkle's `sign_update` / `generate_appcast` come free inside the SPM artifact
   (`build/SourcePackages/artifacts/sparkle/Sparkle/bin/`) — nothing extra to download or pin.
 
+### 🔑 The update-signing key: custody, and why losing it is unrecoverable
+
+The EdDSA private key is the **single most irreplaceable asset in this project** — more than the
+Developer ID certificate, which Apple can reissue. This one, nobody can.
+
+It exists in exactly **three** places (as of 2.1.0, 2026-07-13):
+
+1. The maintainer's **login keychain** (service `https://sparkle-project.org`, account `ed25519`).
+2. The maintainer's **password manager** ("Tscribe — Sparkle EdDSA update signing key").
+3. The **`SPARKLE_PRIVATE_KEY`** GitHub secret (write-only; can't be read back).
+
+**If all copies are lost, every existing install is permanently cut off from updates.** Not
+inconvenienced — cut off. The *public* half (`SUPublicEDKey`) is compiled into every shipped copy of
+Tscribe, and Sparkle installs nothing that isn't signed by the matching private key. A new key means a
+new public key, which only reaches users via a build they'd have to download by hand — which is the
+one thing auto-updates exist to avoid. There is no recovery path, only a mass email.
+
+So: **never let the keychain be the only copy.** Re-export any time with
+`build/SourcePackages/artifacts/sparkle/Sparkle/bin/generate_keys -x <file>` (that binary created the
+keychain item, so it's in the item's ACL and won't prompt — `sign_update` is not, and will).
+
+Rotating the key deliberately (compromise, say) has the same cost and needs the same plan: ship the
+new public key in a build, and accept that everyone on an older build must update manually once.
+
+### Gotcha: the `github-pages` environment is branch-locked by default
+
+Enabling Pages auto-creates a `github-pages` environment whose deployment policy allows **only the
+default branch**. The `publish-appcast` job deploys from a **tag** (`v*`), so the first tagged release
+was rejected outright — the job failed with **zero steps and no log**, which looks nothing like a
+build error and sends you hunting in the wrong place. If you ever see that shape of failure, check the
+environment before you read a line of YAML.
+
+Fixed permanently by adding a tag policy; if the environment is ever recreated, re-add it:
+
+```sh
+gh api -X POST repos/jwmay/tscribe/environments/github-pages/deployment-branch-policies \
+  -f name='v*' -f type=tag
+```
+
+### Gotcha: Pages action versions are a matched set
+
+`actions/upload-pages-artifact` and `actions/deploy-pages` must not skew across majors — a mismatch
+fails in confusing ways. Keep them in step with the (known-good) Pages deploy in the `docmayscience`
+repo; that's the reference implementation.
+
+### Verifying a release from the outside
+
+Don't trust the build to grade its own homework. `scripts/verify-release.py` re-checks a *published*
+release the way a user's Mac would: fetches the appcast from the real URL, downloads the enclosure
+GitHub actually serves, and verifies the EdDSA signature against the public key read **out of the
+shipped app itself** — plus notarization, stapling, the Developer ID on all five Sparkle components,
+and that no 2.9 GB model snuck into the bundle.
+
+```sh
+python3 scripts/verify-release.py          # after any release
+```
+
+⚠️ **Sparkle does not enforce notarization** (it gates on the EdDSA signature and a code-signature
+match — an un-notarized Developer ID build installs fine; observed, not assumed). The CI check that
+refuses to publish a zip that isn't `source=Notarized Developer ID` is therefore the *only* thing
+standing between users and an app that trips Gatekeeper **after** the old version has already been
+replaced. Do not remove it.
+
 ### Gotcha: SPM + `safe.bareRepository`
 
 SPM clones dependencies as **bare** git repos. A global `safe.bareRepository = explicit` (reasonable
