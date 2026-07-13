@@ -228,6 +228,12 @@ final class TranscriberModel: ObservableObject {
     #if SPARKLE_UPDATES
     /// Standard edition: Sparkle auto-updates. Inert until the user opts in.
     let updater = UpdaterController()
+
+    /// Drives the first-run consent sheet. Lives on the MODEL — which the views observe —
+    /// rather than being read off `updater` (a nested ObservableObject whose changes don't
+    /// republish here). Getting that wrong pinned the sheet open in 2.1.0/2.1.1 and made the
+    /// app impossible to quit or update. See `UpdaterController.onConsentAnswered`.
+    @Published var showUpdateConsent = false
     #else
     /// Complete edition: presents the "Tscribe can't check for updates" explainer, since
     /// this build has no updater and never connects to anything.
@@ -240,6 +246,13 @@ final class TranscriberModel: ObservableObject {
         installer.onInstalled = { [weak self] in self?.finishOnboarding() }
         #endif
         stage = defaultStage
+        #if SPARKLE_UPDATES
+        updater.onConsentAnswered = { [weak self] in self?.showUpdateConsent = false }
+        // Ask on the first launch that reaches a normal screen. Not during onboarding — a new
+        // user is already downloading a 2.9 GB model and doesn't need a second question on top
+        // of it; `finishOnboarding()` asks once that's done.
+        showUpdateConsent = !updater.consentAnswered && stage != .onboarding
+        #endif
     }
 
     /// The screen shown at launch and after `reset()`. In the Standard edition this is
@@ -350,6 +363,10 @@ final class TranscriberModel: ObservableObject {
     /// Called by `ModelInstaller` once the model is verified and installed.
     /// Transcribes a file the user dropped during setup, or returns to the drop screen.
     private func finishOnboarding() {
+        #if SPARKLE_UPDATES
+        // Onboarding suppressed the consent question; now that setup is done, ask it.
+        if !updater.consentAnswered { showUpdateConsent = true }
+        #endif
         if let url = pendingMediaURL {
             pendingMediaURL = nil
             load(url: url)

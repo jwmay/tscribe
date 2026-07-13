@@ -78,13 +78,21 @@ struct UpdateSettingsPane: View {
 
 /// The one-time, first-run question: **may Tscribe check for updates?**
 ///
-/// Asked rather than assumed. Tscribe's users handle privileged and evidentiary material,
-/// and an app that quietly phones home on their behalf is not something they can vouch for
-/// to a court or a client. So the default is off, the question is asked in plain language,
-/// and "no" is a real answer that is remembered.
+/// Asked rather than assumed. Tscribe's users handle privileged and evidentiary material, and an
+/// app that quietly phones home on their behalf is not something they can vouch for to a court or
+/// a client. So the default is off, the question is asked in plain language, and "no" is a real
+/// answer that is remembered.
 ///
-/// Shown once, on the first launch that reaches a normal screen — including for someone
-/// upgrading from a version that predates auto-updates, who never sees onboarding.
+/// Shown once, on the first launch that reaches a normal screen — including for someone upgrading
+/// from a version that predates auto-updates, who never sees onboarding.
+///
+/// ⚠️ **A full-window screen, NOT a sheet** — and that is a hard requirement, not a style choice.
+/// 2.1.0/2.1.1 presented this as a modal sheet, and AppKit ignores `NSApp.terminate` outright
+/// while a modal sheet session is running: not even `applicationShouldTerminate` is called. So
+/// ⌘Q, the close button, and Sparkle's "Install and Relaunch" (which *must* quit the app to swap
+/// the bundle) all silently did nothing. The app could not be quit, updated, or used — force quit
+/// was the only escape. A first-run question the user did not ask for must never be able to trap
+/// them. Modeled on `OnboardingView`, which is a screen for exactly the same reason.
 struct UpdateConsentSheet: View {
     @ObservedObject var updater: UpdaterController
 
@@ -138,8 +146,8 @@ struct UpdateConsentSheet: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: 440)
         }
-        .padding(32)
-        .frame(width: 520)
+        .padding(40)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)   // a screen, never a sheet — see above
     }
 
     private func point(_ symbol: String, _ text: LocalizedStringKey) -> some View {

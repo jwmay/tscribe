@@ -4,6 +4,26 @@ All notable changes to Tscribe. Both editions (Standard and Complete) share a
 version line. Format follows [Keep a Changelog](https://keepachangelog.com);
 versioning is app-marketing semver.
 
+## [2.1.2] — 2026-07-13
+
+**Critical.** Fixes a bug that could leave Tscribe impossible to quit or update.
+
+### Fixed
+- **The first-run update question could freeze the app.** It was shown as a modal sheet, and
+  answering it didn't take it down — so the question stayed on screen forever. macOS refuses
+  to quit an app while a modal sheet is up, so ⌘Q, the close button, and the updater's
+  "Install and Relaunch" all silently did nothing. Force quit was the only way out, and the
+  update could never install. Anyone seeing that question on a fresh install of 2.1.0 or
+  2.1.1 could hit it.
+
+  The question is now a normal full-window screen, like the first-launch setup screen. It has
+  no modality, so it cannot block anything: you can quit at any time, answered or not, and
+  the update installs as it should. If you quit without answering, you'll simply be asked
+  again next launch.
+
+If you are on 2.1.0 or 2.1.1 and Tscribe seems stuck on the update question, force quit it
+(⌥⌘Esc), reopen, and answer the question — then update to 2.1.2, which cannot do this.
+
 ## [2.1.1] — 2026-07-13
 
 Fixes a promise 2.1.0 didn't keep.
