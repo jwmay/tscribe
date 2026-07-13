@@ -61,6 +61,10 @@ final class UpdaterController: ObservableObject {
 
     private var updater: SPUUpdater { controller.updater }
 
+    /// When Tscribe last asked the server anything, or nil if it never has. Shown in
+    /// Settings: "no outbound connections" is a claim, and this is the receipt.
+    var lastUpdateCheckDate: Date? { updater.lastUpdateCheckDate }
+
     /// A user-initiated check (the menu item). Always allowed regardless of consent —
     /// clicking it *is* consent for this one check.
     func checkForUpdates() {

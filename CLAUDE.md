@@ -321,6 +321,36 @@ refuses to publish a zip that isn't `source=Notarized Developer ID` is therefore
 standing between users and an app that trips Gatekeeper **after** the old version has already been
 replaced. Do not remove it.
 
+### Gotcha: `showSettingsWindow:` silently does nothing in SwiftUI
+
+`NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)` **returns `true` and
+opens nothing.** SwiftUI wires its `Settings` scene to an internal `menuAction:` handler, so the
+old AppKit selector reports success while doing absolutely nothing — a false positive that looks
+exactly like "the Settings scene is broken" when it is perfectly fine.
+
+To open Settings programmatically (e.g. the DEBUG `--stage` harness), perform the **real menu
+item**, which is what a click does:
+
+```swift
+let item = NSApp.mainMenu?.items.first?.submenu?.items.first { $0.title.hasPrefix("Settings") }
+NSApp.sendAction(item!.action!, to: item!.target, from: item!)
+```
+
+### Where the update preference lives (and why)
+
+Settings (⌘,) is the **canonical** home — reachable from any screen. The start screen also has a
+toggle, grouped with the other checkboxes.
+
+2.1.0 got this wrong in a way worth remembering: the toggle existed *only* on the start screen,
+styled `.footnote`/`.tertiary` beneath two paragraphs of fine print. It was unfindable, and
+unreachable at all with a transcript open — while the consent sheet promised the choice could be
+changed "at any time". **A privacy control the user cannot find is not a privacy control**, and for
+this audience that's not a cosmetic bug. If you add another standing preference, put it in Settings.
+
+(The two start-screen checkboxes — auto-detect language, reduce false text in silence — are
+deliberately *not* in Settings: they're choices about the file you're about to drop, not standing
+app preferences, so they belong next to the drop zone.)
+
 ### Gotcha: SPM + `safe.bareRepository`
 
 SPM clones dependencies as **bare** git repos. A global `safe.bareRepository = explicit` (reasonable

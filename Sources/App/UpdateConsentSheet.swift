@@ -15,18 +15,64 @@ struct CheckForUpdatesMenuItem: View {
     }
 }
 
-/// The standing "check automatically" toggle on the start screen, so the first-run answer
-/// is never a life sentence in either direction. Observes the updater directly, for the
-/// same reason `CheckForUpdatesMenuItem` does.
+/// The standing "check automatically" toggle on the start screen, so the first-run answer is
+/// never a life sentence in either direction. Observes the updater directly, for the same
+/// reason `CheckForUpdatesMenuItem` does.
+///
+/// Styled as a peer of the other start-screen settings (`.callout` / `.secondary`), NOT as
+/// fine print. In 2.1.0 this was `.footnote` / `.tertiary` and sat below two paragraphs of
+/// actual fine print, so nobody could find it — which made the consent sheet's "you can change
+/// this later" a lie. See SettingsView.
 struct AutoUpdateToggle: View {
     @ObservedObject var updater: UpdaterController
 
     var body: some View {
         Toggle("Check for updates automatically", isOn: $updater.automaticallyChecksForUpdates)
             .toggleStyle(.checkbox)
-            .font(.footnote)
-            .foregroundStyle(.tertiary)
             .help("Asks docmayscience.com once a day whether a newer Tscribe exists. This is the only outbound connection Tscribe makes — nothing about you, this Mac, or your recordings is ever sent.")
+    }
+}
+
+/// The Updates pane in Settings (⌘,) — the canonical, always-reachable home for this choice.
+struct UpdateSettingsPane: View {
+    @ObservedObject var updater: UpdaterController
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Updates")
+                .font(.title3.weight(.semibold))
+
+            Toggle("Check for updates automatically", isOn: $updater.automaticallyChecksForUpdates)
+                .toggleStyle(.checkbox)
+
+            Text("Tscribe asks docmayscience.com once a day whether a newer version exists. That is the **only** outbound connection Tscribe ever makes: no analytics, no telemetry, no crash reports. Nothing about you or this Mac is sent, not even anonymously — and nothing is ever installed without your say-so.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Text("Your recordings and transcripts never leave this Mac, whichever way you set this.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Divider()
+
+            HStack {
+                Button("Check Now") { updater.checkForUpdates() }
+                    .disabled(!updater.canCheckForUpdates)
+                Spacer()
+                // "It never connects" is a claim; this is the receipt. If it says Never, it
+                // has never once reached out.
+                Text(lastChecked)
+                    .font(.footnote)
+                    .foregroundStyle(.tertiary)
+            }
+        }
+    }
+
+    private var lastChecked: String {
+        guard let date = updater.lastUpdateCheckDate else { return "Never checked" }
+        return "Last checked \(date.formatted(date: .abbreviated, time: .shortened))"
     }
 }
 
@@ -82,7 +128,10 @@ struct UpdateConsentSheet: View {
             }
             .padding(.top, 2)
 
-            Text("You can change this at any time on the start screen, and “Check for Updates…” in the Tscribe menu always works on demand. The **Complete edition** never checks at all — it makes no network connection of any kind.")
+            // Name a place that exists and is reachable from anywhere. 2.1.0 said "on the
+            // start screen", where the toggle was styled as fine print and unreachable with a
+            // transcript open — a promise the app didn't keep.
+            Text("You can change this whenever you like in **Tscribe ▸ Settings** (⌘,), and “Check for Updates…” in the Tscribe menu always works on demand. The **Complete edition** never checks at all — it makes no network connection of any kind.")
                 .font(.footnote)
                 .foregroundStyle(.tertiary)
                 .multilineTextAlignment(.center)
