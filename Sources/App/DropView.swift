@@ -54,10 +54,16 @@ struct DropView: View {
                         .padding(.top, 2)
                 }
 
-                HStack(spacing: 18) {
-                    Toggle("Auto-detect language", isOn: $model.autoDetectLanguage)
-                    Toggle("Reduce false text in silence", isOn: $model.reduceSilenceHallucinations)
-                        .help("Uses voice-activity detection to skip silent stretches, reducing invented words. Recommended for recordings with long pauses.")
+                // Settings the user can actually see. The update toggle belongs HERE, with its
+                // peers — in 2.1.0 it was styled as a tertiary footnote and stranded below the
+                // fine print, where nobody found it.
+                VStack(spacing: 8) {
+                    HStack(spacing: 18) {
+                        Toggle("Auto-detect language", isOn: $model.autoDetectLanguage)
+                        Toggle("Reduce false text in silence", isOn: $model.reduceSilenceHallucinations)
+                            .help("Uses voice-activity detection to skip silent stretches, reducing invented words. Recommended for recordings with long pauses.")
+                    }
+                    updateControls
                 }
                 .toggleStyle(.checkbox)
                 .font(.callout)
@@ -79,8 +85,6 @@ struct DropView: View {
                         .multilineTextAlignment(.center)
                         .frame(maxWidth: 470)
                 }
-
-                updateControls
 
                 if !model.recents.isEmpty {
                     librarySection

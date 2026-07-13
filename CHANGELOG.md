@@ -4,6 +4,29 @@ All notable changes to Tscribe. Both editions (Standard and Complete) share a
 version line. Format follows [Keep a Changelog](https://keepachangelog.com);
 versioning is app-marketing semver.
 
+## [2.1.1] — 2026-07-13
+
+Fixes a promise 2.1.0 didn't keep.
+
+### Fixed
+- **You can now actually turn update checks back off.** 2.1.0's consent dialog said the
+  choice could be changed "at any time on the start screen" — but the toggle was styled
+  as fine print, tucked below two paragraphs of actual fine print, and existed *only* on
+  the start screen, so with a transcript open it couldn't be reached at all. A privacy
+  choice you can't find is not a choice. Reported by a user who went looking for it and
+  couldn't find it, which is exactly the failure it was.
+
+### Added
+- **Settings (⌘,)** — a proper Settings window, reachable from anywhere, with the update
+  preference, a **Check Now** button, a plain-language statement of exactly what a check
+  sends (nothing about you or your Mac), and when Tscribe last checked. If it says
+  **"Never checked"**, it has never once contacted anything.
+- The start-screen toggle is now a visible peer of the other settings rather than a
+  footnote, and the consent dialog points at Settings, which is somewhere that exists.
+- In the **Complete edition**, Settings says plainly that there is nothing to configure
+  because the app makes no network connection of any kind — rather than showing a dead
+  switch.
+
 ## [2.1.0] — 2026-07-12
 
 Tscribe can now tell you when there's a newer version — if you let it.

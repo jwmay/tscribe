@@ -80,6 +80,13 @@ struct TscribeApp: App {
                     .disabled(model.transcript == nil)
             }
         }
+
+        // Puts "Settings…" (⌘,) in the Tscribe menu. This is the always-reachable home for the
+        // update preference — the start-screen toggle is unreachable with a transcript open,
+        // which made 2.1.0's "you can change this later" untrue.
+        Settings {
+            SettingsView(model: model)
+        }
     }
 
     private func openFilePanel() {
@@ -302,6 +309,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     model.clock.time = t
                     model.stageClockSheet = true
                 }
+            }
+        }
+        if env["TSCRIBE_STAGE_SETTINGS"] == "1" {
+            // Opens the Settings window by performing the REAL menu item — the same
+            // target/action a click sends.
+            //
+            // Do NOT reach for `NSApp.sendAction(Selector("showSettingsWindow:"))` here: SwiftUI
+            // wires its Settings item to an internal `menuAction:` handler, so the old AppKit
+            // selector cheerfully returns true and does nothing at all. That false positive cost
+            // an hour of "why is the Settings scene broken" when it was never broken.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                guard let appMenu = NSApp.mainMenu?.items.first?.submenu,
+                      let item = appMenu.items.first(where: { $0.title.hasPrefix("Settings") }),
+                      let action = item.action
+                else { NSLog("STAGE: no Settings menu item"); return }
+                NSApp.activate(ignoringOtherApps: true)
+                NSApp.sendAction(action, to: item.target, from: item)
             }
         }
         if env["TSCRIBE_STAGE_EXPORTMENU"] == "1" {
