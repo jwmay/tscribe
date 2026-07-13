@@ -321,6 +321,39 @@ refuses to publish a zip that isn't `source=Notarized Developer ID` is therefore
 standing between users and an app that trips Gatekeeper **after** the old version has already been
 replaced. Do not remove it.
 
+### 🚨 Never show an unsolicited modal sheet. It can make the app unquittable.
+
+**AppKit ignores `NSApp.terminate` while a modal sheet session is running — it does not even call
+`applicationShouldTerminate`.** So if a sheet is stuck open, ⌘Q, the close button, and Sparkle's
+"Install and Relaunch" (which *must* quit the app to swap the bundle) all become silent no-ops.
+The app cannot be quit, updated, or used. Force quit is the only way out. **No delegate hook can
+rescue you** — by the time you'd want one, it isn't being called.
+
+2.1.0/2.1.1 shipped exactly this. The first-run consent question was a `.sheet`, `isPresented`
+bound to a value read off `model.updater` — a **nested ObservableObject**, whose changes do *not*
+republish through `TranscriberModel`. So answering flipped the flag, the view never re-evaluated,
+the sheet never closed, and `.interactiveDismissDisabled()` meant it couldn't be escaped either.
+
+Two rules came out of it, both load-bearing:
+
+1. **A screen the user didn't ask for must never be modal.** The consent question is now a
+   full-window view (`ContentView` routes to it), like `OnboardingView`. A screen can't block
+   `terminate`. User-invoked sheets (e.g. Complete's "why can't I check for updates" explainer)
+   are fine — the user opened it and can close it.
+2. **Never bind a view's state to a nested ObservableObject.** `TranscriberModel.updater` and
+   `.installer` do not republish through the model. Either give the view its own
+   `@ObservedObject` (as `CheckForUpdatesMenuItem` / `AutoUpdateToggle` / `UpdateSettingsPane` do),
+   or mirror the state onto a `@Published` on the model via a callback (as
+   `UpdaterController.onConsentAnswered` and `ModelInstaller.onInstalled` do). This same trap bit
+   three separate call sites; the sheet was the one where it was fatal.
+
+Regression test: `TSCRIBE_STAGE_CONSENTTEST=yes|no|quit` (DEBUG). It answers the question the way
+a real user would and then **checks the app actually exits** — including with the question still
+up and unanswered. Screenshotting the dialog proved nothing: it looked perfect *and* was a trap.
+To exercise the real "an update is available" path, build with an older version so the live feed
+offers an upgrade:
+`xcodebuild … MARKETING_VERSION=2.0.9 CURRENT_PROJECT_VERSION=16`.
+
 ### Gotcha: `showSettingsWindow:` silently does nothing in SwiftUI
 
 `NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)` **returns `true` and

@@ -143,6 +143,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// **Never let a sheet make the app unquittable.**
+    ///
+    /// A sheet attached to the main window blocks `NSApp.terminate` — so ⌘Q, the red button and
+    /// Sparkle's "Install and Relaunch" (which must quit the app to swap the bundle) all become
+    /// no-ops, and force quit is the only way out. That is what 2.1.1 shipped.
+    ///
+    /// The consent question is worth asking, but it is *not* worth trapping someone inside the
+    /// app. If a quit arrives while it's up, take the sheet down, let the runloop settle, and
+    /// quit. The question simply goes unanswered and gets asked again next launch.
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        // Defence in depth: close any attached sheet so it can't hold the app open.
+        //
+        // This is a backstop, NOT the fix. AppKit does not even call this method while a modal
+        // sheet session is running — that's why 2.1.1's consent sheet made the app unquittable
+        // and no delegate hook could have saved it. The actual fix is that the consent question
+        // is now a full-window screen with no modality at all. This just means that if some
+        // future sheet is open at quit time, it gets closed rather than fighting us.
+        var dismissedSomething = false
+        for window in NSApp.windows {
+            if let sheet = window.attachedSheet {
+                window.endSheet(sheet)
+                dismissedSomething = true
+            }
+        }
+        guard dismissedSomething else { return .terminateNow }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+            NSApp.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
+    }
+
     func application(_ application: NSApplication, open urls: [URL]) {
         guard let url = urls.first else { return }
         if let model {
@@ -311,6 +343,69 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
         }
+        // Regression test for the 2.1.1 consent-sheet deadlock. Reproduces what a real first-run
+        // user does — answer the question, then try to quit (which is what Sparkle's installer
+        // does for you) — and proves the app actually exits. Screenshotting the dialog was never
+        // enough: the dialog looked perfect while being impossible to dismiss.
+        //
+        // TSCRIBE_STAGE_CONSENTTEST=yes|no. Logs CONSENTTEST lines and exits 0 on success;
+        // if the sheet is still attached, it exits 1 rather than hanging like the bug did.
+        if let answer = env["TSCRIBE_STAGE_CONSENTTEST"] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
+                MainActor.assumeIsolated {
+                    guard let model = self?.model else { NSLog("CONSENTTEST: FAIL no model"); exit(1) }
+                    #if SPARKLE_UPDATES
+                    guard model.showUpdateConsent else {
+                        NSLog("CONSENTTEST: FAIL the consent question was never shown")
+                        exit(1)
+                    }
+                    NSLog("CONSENTTEST: question is up")
+
+                    // No modal sheet may exist — that is the whole point of the 2.1.2 fix.
+                    if NSApp.windows.contains(where: { $0.attachedSheet != nil }) {
+                        NSLog("CONSENTTEST: FAIL a modal sheet is attached — it can block terminate")
+                        exit(1)
+                    }
+
+                    // "quit" = the user's ⌘Q with the question still on screen and unanswered.
+                    // In 2.1.0/2.1.1 this did nothing at all: AppKit ignores terminate during a
+                    // modal sheet session, so force quit was the only way out.
+                    if answer == "quit" {
+                        NSLog("CONSENTTEST: terminating with the question still up")
+                        NSApp.terminate(nil)
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+                            NSLog("CONSENTTEST: FAIL cannot quit with the question up — DEADLOCK")
+                            exit(1)
+                        }
+                        return
+                    }
+
+                    model.updater.answerConsent(enabled: answer == "yes")
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                        MainActor.assumeIsolated {
+                            if model.showUpdateConsent {
+                                NSLog("CONSENTTEST: FAIL question still up after answering — DEADLOCK")
+                                exit(1)
+                            }
+                            NSLog("CONSENTTEST: question dismissed after answering")
+                            // The real test: can the app terminate? That is what Sparkle's
+                            // "Install and Relaunch" needs, and what hung in 2.1.1.
+                            NSLog("CONSENTTEST: calling terminate")
+                            NSApp.terminate(nil)
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+                                NSLog("CONSENTTEST: FAIL terminate did not quit the app — DEADLOCK")
+                                exit(1)
+                            }
+                        }
+                    }
+                    #else
+                    NSLog("CONSENTTEST: skipped (no updater in this edition)")
+                    exit(0)
+                    #endif
+                }
+            }
+        }
+
         if env["TSCRIBE_STAGE_SETTINGS"] == "1" {
             // Opens the Settings window by performing the REAL menu item — the same
             // target/action a click sends.

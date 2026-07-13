@@ -14,8 +14,8 @@ configs:
   ReleaseStandard: release
 settings:
   base:
-    MARKETING_VERSION: "2.1.1"
-    CURRENT_PROJECT_VERSION: "18"
+    MARKETING_VERSION: "2.1.2"
+    CURRENT_PROJECT_VERSION: "19"
     SWIFT_VERSION: "5.0"
     DEVELOPMENT_TEAM: ""
 # Sparkle (auto-update) is a Standard-only dependency, but SPM has no notion of a

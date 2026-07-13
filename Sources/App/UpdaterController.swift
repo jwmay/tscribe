@@ -39,6 +39,17 @@ final class UpdaterController: ObservableObject {
     /// separately from the answer so that "no" is a remembered choice and we never nag.
     @Published private(set) var consentAnswered: Bool
 
+    /// Called on the main thread once the user answers, so the model can take the sheet down.
+    ///
+    /// A callback rather than letting the view observe `consentAnswered` directly: this is a
+    /// *nested* ObservableObject, so its changes do NOT republish through `TranscriberModel`.
+    /// In 2.1.0/2.1.1 the sheet's `isPresented` binding read `consentAnswered` from a view that
+    /// only observed the model — so answering flipped the flag and the sheet never noticed. The
+    /// sheet stayed pinned, and a permanently-modal sheet blocks window close, which blocks
+    /// NSApp.terminate, which is precisely what Sparkle must do to install an update. The app
+    /// became unquittable. Mirrors `ModelInstaller.onInstalled`.
+    var onConsentAnswered: (() -> Void)?
+
     private let controller: SPUStandardUpdaterController
 
     init() {
@@ -71,13 +82,23 @@ final class UpdaterController: ObservableObject {
         updater.checkForUpdates()
     }
 
-    /// Record the first-run answer. "Yes" also runs an immediate check, which is what the
-    /// user just asked for.
+    /// Record the first-run answer. "Yes" also runs an immediate check, which is what the user
+    /// just asked for.
     func answerConsent(enabled: Bool) {
         automaticallyChecksForUpdates = enabled
         UserDefaults.standard.set(true, forKey: Self.consentKey)
         consentAnswered = true
-        if enabled { updater.checkForUpdates() }
+        onConsentAnswered?()          // take the sheet down FIRST
+
+        guard enabled else { return }
+        // Deliberately delayed, not just `main.async`: let the sheet finish dismissing before
+        // Sparkle puts anything on screen. Sparkle's installer has to terminate the app, and a
+        // sheet still attached to the main window stops it dead — that was the 2.1.1 deadlock.
+        // It also means that if there's no update, Sparkle's modal "you're up to date" alert
+        // (which blocks the main queue while it's up) can't start while the sheet is mid-flight.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
+            self?.updater.checkForUpdates()
+        }
     }
 }
 #endif
