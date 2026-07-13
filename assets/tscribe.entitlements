@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!--
+    Exceptions to the hardened runtime (which package.sh enables at signing time).
+    Tscribe intentionally needs NONE:
+
+      * Not sandboxed, so it keeps full read access to user-selected media anywhere
+        on disk (no app-sandbox / file-access keys).
+      * It spawns its bundled CLIs (whisper-cli, sherpa diarizer) as separate,
+        independently-signed processes. That is not code injection, so no allow-*
+        injection exceptions are needed.
+      * Neither the app nor the CLIs JIT or map unsigned executable memory.
+      * Outgoing network (the Standard edition model download) is unaffected by the
+        hardened runtime; that is a sandbox concern, and we are not sandboxed.
+
+    If notarization ever reports a library-validation failure for a bundled binary,
+    add the key com.apple.security.cs.disable-library-validation set to true, and
+    note it usually belongs on that CLI's own signing rather than on the app.
+
+    Keep this file free of double-hyphens: AMFI's XML parser rejects them inside
+    comments (they are illegal in XML), and plutil will NOT catch it.
+  -->
+</dict>
+</plist>
