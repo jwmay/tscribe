@@ -5,10 +5,23 @@ name: Release (Standard)
 # (~2.7 GB) exceeds GitHub's limit and is still released manually from a dev Mac
 # via scripts/package-complete.sh.
 #
-# No Apple Developer account / signing secrets are needed: the app is ad-hoc
-# signed (codesign --sign -), exactly as local packaging does. The small engine
-# artifacts (whisper-cli + Silero VAD) are committed under engine/, so the runner
-# needs no whisper.cpp checkout; the large-v3 model is downloaded at first launch.
+# Signing is OPTIONAL and secret-driven:
+#   * With the Developer ID secrets set (see below), the app + DMG are signed with
+#     the hardened runtime, notarized by Apple, and stapled — so users get a plain
+#     double-click install instead of the "unidentified developer" right-click dance.
+#   * Without them, package.sh falls back to ad-hoc signing, so forks and secret-less
+#     runs still build a working (if friction-y) DMG.
+#
+# Required repo secrets for the signed path:
+#   MACOS_CERT_P12       base64 of the exported "Developer ID Application" .p12
+#   MACOS_CERT_PASSWORD  the .p12 export password
+#   NOTARY_APPLE_ID      Apple ID used for notarization
+#   NOTARY_TEAM_ID       10-char Team ID
+#   NOTARY_PASSWORD      an app-specific password (NOT the Apple ID password)
+#
+# The small engine artifacts (whisper-cli + Silero VAD) are committed under engine/,
+# so the runner needs no whisper.cpp checkout; the large-v3 model is downloaded at
+# first launch.
 #
 # The speaker-diarization engine (~56 MB: sherpa-onnx CLI + 2 ONNX models) is NOT
 # committed — it's fetched/built by scripts/fetch-diarization-engine.sh, cached
@@ -31,6 +44,11 @@ concurrency:
 jobs:
   build-standard:
     runs-on: macos-latest
+    env:
+      # Secrets can't be used directly in step `if:`, so hoist presence to an env flag.
+      # (The `runner` context is NOT available here, so $RUNNER_TEMP is referenced
+      # inside the step shells below rather than hoisted into a job-level env var.)
+      HAS_SIGNING: ${{ secrets.MACOS_CERT_P12 != '' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -70,8 +88,72 @@ jobs:
           done
           chmod +x engine/sherpa-onnx-offline-speaker-diarization
 
+      # Import the Developer ID identity into a throwaway keychain and stash the
+      # notary credentials in it. Exports SIGN_ID + NOTARY_PROFILE into the job env,
+      # which is all package.sh needs to switch from ad-hoc to the signed path.
+      - name: Import Developer ID certificate + notary credentials
+        if: env.HAS_SIGNING == 'true'
+        env:
+          CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+          CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+          NOTARY_APPLE_ID: ${{ secrets.NOTARY_APPLE_ID }}
+          NOTARY_TEAM_ID: ${{ secrets.NOTARY_TEAM_ID }}
+          NOTARY_PASSWORD: ${{ secrets.NOTARY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          KEYCHAIN_PATH="$RUNNER_TEMP/tscribe-signing.keychain-db"
+          CERT_PATH="$RUNNER_TEMP/certificate.p12"
+          KEYCHAIN_PW="$(openssl rand -base64 24)"
+
+          printf '%s' "$CERT_P12" | base64 --decode > "$CERT_PATH"
+
+          security create-keychain -p "$KEYCHAIN_PW" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"   # no auto-lock mid-build
+          security unlock-keychain -p "$KEYCHAIN_PW" "$KEYCHAIN_PATH"
+          security import "$CERT_PATH" -k "$KEYCHAIN_PATH" -P "$CERT_PASSWORD" \
+            -T /usr/bin/codesign -T /usr/bin/security -f pkcs12
+          # Without this, codesign blocks forever on an interactive "allow access" prompt.
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "$KEYCHAIN_PW" "$KEYCHAIN_PATH" >/dev/null
+          # Make it the keychain both codesign and notarytool resolve against.
+          security default-keychain -s "$KEYCHAIN_PATH"
+          security list-keychains -d user -s "$KEYCHAIN_PATH"
+
+          rm -f "$CERT_PATH"
+
+          # Derive the exact identity string rather than hardcoding a name that can drift.
+          SIGN_ID="$(security find-identity -v -p codesigning "$KEYCHAIN_PATH" \
+            | grep 'Developer ID Application' | head -1 | sed -E 's/.*"(.+)".*/\1/')"
+          [ -n "$SIGN_ID" ] || { echo "No Developer ID Application identity was imported"; exit 1; }
+          echo "Imported identity: $SIGN_ID"
+
+          xcrun notarytool store-credentials tscribe-notary \
+            --apple-id "$NOTARY_APPLE_ID" \
+            --team-id "$NOTARY_TEAM_ID" \
+            --password "$NOTARY_PASSWORD" \
+            --keychain "$KEYCHAIN_PATH"
+
+          # package.sh reads these two; setting them flips it to the signed+notarized path.
+          echo "SIGN_ID=$SIGN_ID" >> "$GITHUB_ENV"
+          echo "NOTARY_PROFILE=tscribe-notary" >> "$GITHUB_ENV"
+
       - name: Package Standard DMG
         run: scripts/package-standard.sh
+
+      # Prove the released artifact is actually what we think it is. `source=Notarized
+      # Developer ID` is the verdict that means "opens on a plain double-click".
+      - name: Verify signature + notarization
+        if: env.HAS_SIGNING == 'true'
+        run: |
+          set -euo pipefail
+          spctl -a -vvv -t install dist/Tscribe.dmg
+          spctl -a -vvv -t install dist/Tscribe.dmg 2>&1 | grep -q "source=Notarized Developer ID" \
+            || { echo "DMG is not notarized — refusing to publish"; exit 1; }
+          xcrun stapler validate dist/Tscribe.dmg
+
+      - name: Clean up signing keychain
+        if: ${{ always() && env.HAS_SIGNING == 'true' }}
+        run: security delete-keychain "$RUNNER_TEMP/tscribe-signing.keychain-db" || true
 
       - name: Upload DMG artifact
         uses: actions/upload-artifact@v4

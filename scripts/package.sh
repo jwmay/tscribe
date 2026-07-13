@@ -1,9 +1,21 @@
 #!/bin/bash
 set -euo pipefail
 
-# Packages Tscribe into a self-contained, ad-hoc-signed .dmg.
-# Free (no Apple Developer account). First launch on another Mac:
-# right-click the app → Open → Open (one-time Gatekeeper bypass).
+# Packages Tscribe into a self-contained .dmg.
+#
+# Signing (controlled by two env vars; both default off → the free ad-hoc path):
+#   default              Ad-hoc signed (no Apple Developer account). First launch on
+#                        another Mac needs the one-time right-click → Open → Open.
+#   SIGN_ID=...          A Developer ID Application identity → a Gatekeeper-friendly
+#                        signed build (hardened runtime + secure timestamp). Find it
+#                        with `security find-identity -v -p codesigning`, e.g.
+#                        SIGN_ID="Developer ID Application: Jane Doe (ABCDE12345)".
+#   + NOTARY_PROFILE=... A `notarytool store-credentials` profile name → also notarize
+#                        + staple the app AND the dmg, so both open on a normal
+#                        double-click and validate fully offline. Requires SIGN_ID.
+#   Example:
+#     SIGN_ID="Developer ID Application: Jane Doe (ABCDE12345)" \
+#     NOTARY_PROFILE=tscribe-notary scripts/package.sh --edition standard
 #
 # Usage: package.sh [--edition standard|complete]
 #
@@ -139,13 +151,33 @@ if [ "$EDITION" = "complete" ]; then
   echo "   OK: no download URL present"
 fi
 
-echo "==> Ad-hoc signing (inner binaries first, then the app)"
-codesign --force --sign - --timestamp=none "$RES/whisper-cli"
-if [ "$DIAR_BUNDLED" = 1 ]; then
-  codesign --force --sign - --timestamp=none "$RES/sherpa-onnx-offline-speaker-diarization"
+# Signing: ad-hoc by default (free path); Developer ID when SIGN_ID is set. Either way
+# we sign inner-out (nested binaries before the enclosing app), which codesign requires.
+SIGN_ID="${SIGN_ID:--}"
+NOTARY_PROFILE="${NOTARY_PROFILE:-}"
+ENTITLEMENTS="$PROJECT_DIR/assets/tscribe.entitlements"
+
+INNER_BINS=( "$RES/whisper-cli" )
+[ "$DIAR_BUNDLED" = 1 ] && INNER_BINS+=( "$RES/sherpa-onnx-offline-speaker-diarization" )
+
+if [ "$SIGN_ID" = "-" ]; then
+  echo "==> Ad-hoc signing (inner binaries first, then the app)"
+  for b in "${INNER_BINS[@]}"; do
+    codesign --force --sign - --timestamp=none "$b"
+  done
+  codesign --force --sign - --timestamp=none "$APP"
+  codesign --verify --verbose=2 "$APP" || echo "   (verify note above is expected for ad-hoc)"
+else
+  echo "==> Developer ID signing: $SIGN_ID"
+  echo "    (hardened runtime + secure timestamp; inner binaries first, then the app)"
+  for b in "${INNER_BINS[@]}"; do
+    codesign --force --options runtime --timestamp --sign "$SIGN_ID" "$b"
+  done
+  codesign --force --options runtime --timestamp \
+    --entitlements "$ENTITLEMENTS" --sign "$SIGN_ID" "$APP"
+  codesign --verify --deep --strict --verbose=2 "$APP"
+  echo "   OK: signed with Developer ID and verified"
 fi
-codesign --force --sign - --timestamp=none "$APP"
-codesign --verify --verbose=2 "$APP" || echo "   (verify note above is expected for ad-hoc)"
 
 echo "==> Sanity: bundled whisper-cli runs from its bundled location"
 "$RES/whisper-cli" --help >/dev/null 2>&1 && echo "   OK: bundled whisper-cli executes"
@@ -155,6 +187,22 @@ if [ "$DIAR_BUNDLED" = 1 ]; then
   else
     echo "   note: diarizer --help returned nonzero (some builds print usage to stderr)"
   fi
+fi
+
+# Notarize + staple the .app BEFORE packaging, so the app the user drags out of the
+# dmg carries its own ticket and validates with no first-launch network check — the
+# right default for Tscribe's offline audience. Skipped unless a notary profile is set.
+if [ "$SIGN_ID" != "-" ] && [ -n "$NOTARY_PROFILE" ]; then
+  echo "==> Notarizing the app (uploads $APP_NAME.app to Apple's notary service)"
+  APP_ZIP="$(mktemp -u).zip"
+  ditto -c -k --keepParent "$APP" "$APP_ZIP"
+  xcrun notarytool submit "$APP_ZIP" --keychain-profile "$NOTARY_PROFILE" --wait
+  rm -f "$APP_ZIP"
+  xcrun stapler staple "$APP"
+  echo "   OK: notarized + stapled $APP_NAME.app"
+elif [ "$SIGN_ID" != "-" ]; then
+  echo "==> Skipping notarization (SIGN_ID set but NOTARY_PROFILE is empty)"
+  echo "    The app is signed but NOT notarized — it will still warn on first launch."
 fi
 
 echo "==> Creating styled .dmg"
@@ -210,6 +258,19 @@ fi
 
 hdiutil convert "$RW" -format UDZO -imagekey zlib-level=9 -o "$DIST_DIR/$DMG_NAME" >/dev/null
 rm -f "$RW"; rm -rf "$STAGE"
+
+# Sign + notarize + staple the dmg too, so the download itself opens without a
+# Gatekeeper warning (belt-and-suspenders with the already-stapled app inside).
+if [ "$SIGN_ID" != "-" ]; then
+  echo "==> Signing the dmg"
+  codesign --force --timestamp --sign "$SIGN_ID" "$DIST_DIR/$DMG_NAME"
+  if [ -n "$NOTARY_PROFILE" ]; then
+    echo "==> Notarizing the dmg"
+    xcrun notarytool submit "$DIST_DIR/$DMG_NAME" --keychain-profile "$NOTARY_PROFILE" --wait
+    xcrun stapler staple "$DIST_DIR/$DMG_NAME"
+    echo "   OK: notarized + stapled $DMG_NAME"
+  fi
+fi
 
 echo "==> Done"
 echo "    Edition:   $EDITION"
