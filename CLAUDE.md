@@ -53,10 +53,11 @@ onboarding code doesn't exist and the `.onboarding` stage is never reached.
 - `Sources/App/OnboardingView.swift` — **`#if DOWNLOAD_MODEL`**. Full-window onboarding (intro → downloading →
   verifying → installing → failed), mirroring `MissingMediaView` + `WorkingView` patterns.
 - `Sources/App/ContentView.swift` — the `switch model.stage` window router (has the `.onboarding` case).
-- `scripts/package.sh` — `--edition standard|complete`; bundles engine, ad-hoc signs, builds a **styled DMG**
+- `scripts/package.sh` — `--edition standard|complete`; bundles engine, signs, builds a **styled DMG**
   (custom background, positioned app icon + Applications drop target, 128px icons, volume icon; volume
   name "Tscribe Installer"). Standard runs a **drift-guard** (local model SHA must match `ModelSpec.sha256`);
   Complete runs an **offline-audit** (fails if the Hugging Face URL leaked into the binary).
+  Signing is env-driven — see **Code signing & notarization** below.
 - **DMG styling — how it works (macOS 26 gotcha).** The installer window layout lives in a committed
   `.DS_Store` template (`assets/dmg/DS_Store`). package.sh injects it into the mounted DMG headlessly
   (no Finder, no dmgbuild) — so it works in background shells and CI. This is required because on
@@ -163,6 +164,41 @@ Both editions share the version. Bump the two values in `project.yml`
 (`MARKETING_VERSION`, `CURRENT_PROJECT_VERSION`), regenerate, then tag `vX.Y.Z` (the tag triggers
 the Standard CI release). No checked-in Info.plist (`GENERATE_INFOPLIST_FILE: YES`).
 
+## Code signing & notarization
+
+Releases are signed with a **Developer ID Application** identity (Team `B5MMX2KMWW`), built with the
+**hardened runtime** + a secure timestamp, **notarized** by Apple and **stapled** — so the app opens on
+a plain double-click. Since v2.0.1. (Before that it was ad-hoc signed and users had to right-click →
+Open, which was miserable for non-technical users.)
+
+`package.sh` signing is **env-driven, and ad-hoc is still the default** — so plain `scripts/package.sh`
+and forks/secret-less CI keep building exactly as before:
+
+```sh
+SIGN_ID="Developer ID Application: Joseph May (B5MMX2KMWW)" \
+NOTARY_PROFILE=tscribe-notary \
+scripts/package.sh --edition standard
+```
+
+- `SIGN_ID` (default `-` = ad-hoc) — find it with `security find-identity -v -p codesigning`. When set,
+  inner binaries are signed **inner-out** (the CLIs before the app) with `--options runtime --timestamp`.
+- `NOTARY_PROFILE` — a `notarytool store-credentials` profile. Notarizes + staples **both** the `.app`
+  (before it goes into the dmg, so the *extracted* app validates with **no network check** — the right
+  default for an offline app) **and** the dmg.
+- `assets/tscribe.entitlements` — hardened-runtime exceptions: **intentionally none**. Not sandboxed,
+  spawns its CLIs as separate signed processes (not injection), no JIT. ⚠️ **Keep this file free of
+  double-hyphens** — they're illegal inside XML comments, AMFI rejects them (`AMFIUnserializeXML: syntax
+  error`), and **`plutil -lint` does NOT catch it**. Verify entitlements with `codesign`, never `plutil`.
+- **CI** (`release.yml`) imports the cert into a throwaway keychain from 5 repo secrets — `MACOS_CERT_P12`,
+  `MACOS_CERT_PASSWORD`, `NOTARY_APPLE_ID`, `NOTARY_TEAM_ID`, `NOTARY_PASSWORD` — and **refuses to publish**
+  a dmg that isn't `source=Notarized Developer ID`. Without the secrets it falls back to ad-hoc.
+- Verify any build with `spctl -a -vvv -t install <dmg>` → want `source=Notarized Developer ID`.
+- **Apple holds a new team's first submission for deep analysis** — ours sat `In Progress` for hours.
+  Subsequent ones take <1 min. Don't panic and don't resubmit; the submission lives server-side
+  (`xcrun notarytool info <id> --keychain-profile tscribe-notary`).
+- Membership is $99/yr, auto-renewing. If it ever lapses, **already-shipped apps keep working** (signatures
+  are secure-timestamped and tickets don't expire) — you just can't notarize *new* builds until you renew.
+
 ## Gotchas
 
 - **The transcript list is deliberately EAGER (`VStack`, not `LazyVStack`) and
@@ -184,9 +220,9 @@ the Standard CI release). No checked-in Info.plist (`GENERATE_INFOPLIST_FILE: YE
 
 - **SwiftUI `VideoPlayer` SIGABRTs on macOS 26** in `_AVKit_SwiftUI` — use the `AVPlayerView`
   `NSViewRepresentable` (`PlayerView` in `TranscriptView.swift`) instead.
-- **Ad-hoc signing** (no Apple Developer account): users do a one-time right-click → Open. The
-  downloaded model is *data* (not executed) and lives outside the signed bundle, so it neither
-  triggers Gatekeeper nor breaks the app signature.
+- Releases are **Developer ID signed + notarized** (see below). The downloaded model is *data* (not
+  executed) and lives outside the signed bundle, so it neither triggers Gatekeeper nor breaks the
+  app signature.
 - The **2.9 GB model is never committed**; Complete bundles it from `~/Developer/whisper.cpp` at package
   time, Standard downloads it. Keep them byte-identical (enforced by the Standard drift-guard).
 - Don't edit `tscribe.xcodeproj` — it's regenerated from `project.yml`.
