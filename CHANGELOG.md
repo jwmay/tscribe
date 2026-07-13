@@ -4,6 +4,39 @@ All notable changes to Tscribe. Both editions (Standard and Complete) share a
 version line. Format follows [Keep a Changelog](https://keepachangelog.com);
 versioning is app-marketing semver.
 
+## [2.1.0] — 2026-07-12
+
+Tscribe can now tell you when there's a newer version — if you let it.
+
+### Added
+- **Automatic update checks (Standard edition)** — Tscribe can check once a day
+  for a new version and install it for you, via [Sparkle](https://sparkle-project.org).
+  It is **off until you turn it on**: Tscribe asks once, in plain language, and
+  "no" is a real answer that sticks. You can change your mind any time from the
+  start screen, and **Check for Updates…** in the Tscribe menu always works on
+  demand.
+- Updates are cryptographically signed. Tscribe installs nothing that isn't
+  signed by our key, so even someone who took over the download server could not
+  push a modified Tscribe onto your Mac.
+
+### Privacy
+- An update check is the **only** outbound connection Tscribe ever makes. There
+  is no analytics, no telemetry and no crash reporting — there never has been.
+- Nothing about you or your Mac is sent, not even anonymously: a check asks "is
+  there a newer version?" and nothing else.
+- Nothing is ever installed silently. You always see what changed and click
+  Install yourself.
+- Your recordings and transcripts remain, as always, on your Mac.
+- **The Complete edition still makes no network connection of any kind.** It
+  contains no updater at all — not the code, not the URL — which the build's
+  offline audit now checks and enforces. Instead, it tells you how old it is and
+  offers to open the Tscribe page in your browser.
+
+### Note for existing users
+- Versions **2.0.1 and earlier have no updater**, so they cannot update
+  themselves to 2.1.0 — this one time, download it by hand. From 2.1.0 onward,
+  Tscribe can keep itself current (once you say yes).
+
 ## [2.0.0] — 2026-07-11
 
 The "transcript workbench" release: Tscribe now identifies **who** said what,

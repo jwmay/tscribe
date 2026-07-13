@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!--
+    Sparkle auto-update settings. This file is the INFOPLIST_FILE for the Debug and
+    ReleaseStandard configs ONLY (see project.yml); Xcode merges the GENERATE_INFOPLIST_FILE
+    keys on top of it. The Complete edition (Release) has no INFOPLIST_FILE at all, so none
+    of these keys, and in particular no appcast URL, can reach a Complete build. The
+    offline audit in scripts/package.sh proves that.
+
+    Keep this file free of double hyphens: they are illegal inside XML comments, AMFI
+    rejects the plist at launch, and plutil does NOT catch it. Validate with codesign.
+  -->
+
+  <key>SUFeedURL</key>
+  <string>https://updates.docmayscience.com/appcast.xml</string>
+
+  <!-- EdDSA public key. The matching private key lives only in the maintainer's login
+       keychain (and, for CI, the SPARKLE_ED_PRIVATE_KEY repo secret). An update is
+       installed only if it is signed by that key, so a compromised appcast host still
+       cannot ship a malicious Tscribe. -->
+  <key>SUPublicEDKey</key>
+  <string>xi/nFworT63I0OGzkJOgJtTsF0cjOZe1kqWjsMNnDe8=</string>
+
+  <!-- Privacy defaults for a privileged/evidentiary audience.
+
+       SUEnableAutomaticChecks=false does two jobs. It makes "no automatic checking" the
+       default, and, because the key is PRESENT, it stops Sparkle from showing its own
+       generic permission prompt on second launch. Tscribe asks in its own words instead
+       (UpdateConsentSheet), so the user gets a straight answer about what connects where.
+       Opting in writes the SUEnableAutomaticChecks user default, which overrides this. -->
+  <key>SUEnableAutomaticChecks</key>
+  <false/>
+
+  <!-- Never send a system profile (OS version, CPU, model, app usage stats).
+       Both keys are needed, and they are NOT synonyms. SUEnableSystemProfiling only
+       controls whether Sparkle's own permission prompt offers profiling; the key that
+       actually gates transmission is SUSendProfileInfo (SPUUpdaterSettings). Setting
+       only the first one would leave the sending path on its default. Belt and braces:
+       UpdaterController also forces sendsSystemProfile = false at runtime. -->
+  <key>SUEnableSystemProfiling</key>
+  <false/>
+  <key>SUSendProfileInfo</key>
+  <false/>
+
+  <!-- Never install silently in the background. Even after opting in, the user is shown
+       the new version and clicks Install. An evidentiary tool should not swap itself out
+       from under a transcript that is being worked on. -->
+  <key>SUAutomaticallyUpdate</key>
+  <false/>
+
+  <key>SUScheduledCheckInterval</key>
+  <integer>86400</integer>
+</dict>
+</plist>

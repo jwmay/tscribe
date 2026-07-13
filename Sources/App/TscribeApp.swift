@@ -22,6 +22,23 @@ struct TscribeApp: App {
         }
         .windowResizability(.contentMinSize)
         .commands {
+            // "Check for Updates…" sits under the About item, where macOS users look for it.
+            // It exists in BOTH editions, but means different things: in Standard it asks
+            // Sparkle; in Complete — which never connects to anything — it opens an
+            // explainer offering to open the Tscribe page in the user's browser. Shipping
+            // the item in both keeps the menu honest instead of silently absent.
+            CommandGroup(after: .appInfo) {
+                #if SPARKLE_UPDATES
+                // Its own view, not a bare Button: `updater` is a nested ObservableObject,
+                // so its changes don't republish through `model` — the item has to observe
+                // it directly or `.disabled` goes stale mid-check. (This is the shape
+                // Sparkle's own SwiftUI docs prescribe, for exactly this reason.)
+                CheckForUpdatesMenuItem(updater: model.updater)
+                #else
+                Button("Check for Updates…") { model.showOfflineUpdateInfo = true }
+                #endif
+            }
+
             CommandGroup(replacing: .newItem) {
                 Button("Open…") { openFilePanel() }
                     .keyboardShortcut("o", modifiers: .command)
